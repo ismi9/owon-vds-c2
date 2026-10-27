@@ -238,14 +238,15 @@ class MainActivity : AppCompatActivity() {
                 val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
                 if (frames != null) {
                     framesCount++
-                    val tbLabel = VdsProtocol.TIMEBASE_LABELS[spTimebase.selectedItemPosition]
-                    val tpp = Measure.labelToSeconds(tbLabel) /
-                        (frames.first().samples.size / 10.0)
-                    var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}"
+                    val tbIdx = spTimebase.selectedItemPosition
+                    // швидкість вибірки: 100 МГц / дільник розгортки (ПК: 2.5MS/s на 100us)
+                    val tpp = VdsProtocol.SEPERATE_FREQ.getOrElse(tbIdx) { 1 } / 1e8
+                    var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}" +
+                        " S=" + Measure.formatSampleRate(1 / tpp)
                     runOnUiThread {
                         for (f in frames) {
-                            // програмний тригер: фронт завжди на 1/4 сітки
-                            val shown = Measure.alignRise(f.samples) ?: f.samples
+                            // програмний тригер: фронт на 1/4 сітки, вікно = 10 поділок
+                            val shown = Measure.displayWindow(f.samples)
                             val vbLabel = when (f.chl) {
                                 0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
                                 else -> VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
@@ -281,7 +282,7 @@ class MainActivity : AppCompatActivity() {
                 if (frames != null) {
                     runOnUiThread {
                         for (f in frames) {
-                            val shown = Measure.alignRise(f.samples) ?: f.samples
+                            val shown = Measure.displayWindow(f.samples)
                             when (f.chl) {
                                 0 -> scopeView.ch1 = shown
                                 1 -> scopeView.ch2 = shown

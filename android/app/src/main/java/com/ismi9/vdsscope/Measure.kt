@@ -37,6 +37,15 @@ object Measure {
             else -> "%.1f mHz".format(hz * 1e3)
         }
 
+
+    /** 2.5e6 -> "2.5MS/s" */
+    fun formatSampleRate(hz: Double): String =
+        when {
+            hz >= 1e6 -> "%.2gMS/s".format(hz / 1e6)
+            hz >= 1e3 -> "%.2gkS/s".format(hz / 1e3)
+            else -> "%.2gS/s".format(hz)
+        }
+
     /** Пороги (min, max, mid) сигналу */
     private fun midOf(s: ByteArray): Int {
         var mn = 127; var mx = -128
@@ -49,12 +58,13 @@ object Measure {
     }
 
     /**
-     * Зсунути кадр так, щоб перший фронт (перехід через mid знизу вгору)
-     * опинився на позиції N/4. Якщо фронту нема — null (малюємо як є).
+     * Вікно відображення: глибина пам'яті приладу вдвічі довша за екран
+     * (кадр ~5089 точок = 2 екрани), тож малюємо центральні N/2 точок.
+     * Якщо є піднімальний фронт — він стає на 1/4 ширини вікна.
      */
-    fun alignRise(samples: ByteArray): ByteArray? {
+    fun displayWindow(samples: ByteArray): ByteArray {
         val n = samples.size
-        if (n < 64) return null
+        if (n < 128) return samples
         val mid = midOf(samples)
         var idx = -1
         for (i in 1 until n) {
@@ -62,12 +72,11 @@ object Measure {
                 idx = i; break
             }
         }
-        if (idx < 0) return null
-        val edge = n / 4
-        val out = ByteArray(n)
-        val start = idx - edge
-        for (j in 0 until n) {
-            var k = start + j
+        val len = n / 2
+        val start0 = if (idx >= 0) idx - len / 4 else n / 4
+        val out = ByteArray(len)
+        for (j in 0 until len) {
+            var k = start0 + j
             if (k < 0) k += n
             if (k >= n) k -= n
             out[j] = samples[k]
