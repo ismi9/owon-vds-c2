@@ -80,9 +80,7 @@ class ScopeUsb(private val ctx: Context) {
     /** Команда запису + обов'язкове читання 5-байтової відповіді, як Sendable/JobUnit_I */
     @Synchronized fun writeCmd(add: Int, bytes: Int, value: Int): Boolean {
         if (!writeCmdNoAck(add, bytes, value)) return false
-        val ack = readResponse()
-        if (ack == null) { drain() }
-        return ack != null
+        return readResponse() != null
     }
 
     /** sendCMDbyBytes: значення розбивається на окремі 1-байтові команди з адресами add, add+1, ... */
@@ -141,7 +139,7 @@ class ScopeUsb(private val ctx: Context) {
         val c = connection ?: return null
         val ep = epIn ?: return null
         val buf = ByteArray(VdsProtocol.RESP_LEN)
-        val n = c.bulkTransfer(ep, buf, buf.size, 400)
+        val n = c.bulkTransfer(ep, buf, buf.size, 1000)
         if (n < VdsProtocol.RESP_LEN) return null
         return VdsProtocol.respValue(buf)
     }
@@ -157,15 +155,21 @@ class ScopeUsb(private val ctx: Context) {
         sendCmd(VdsProtocol.ADD_MACHINE_TYPE, 1, VdsProtocol.MACHINE_TYPE_VALUE)
 
     /** Читання кадру: n каналових пакетів. Повертає null при EBUSY. */
+    /**
+     * Рівно потік офіційного ПЗ (TrgStatusInvestigator + GetDataRunner2):
+     * TRG_D -> datafinished -> (trg!=0 || fin>0) ? GETDATA : нічого.
+     * Жодних скидань буфера: запізніла відповідь споживається наступним читанням.
+     */
     @Synchronized fun readFrame(ch1On: Boolean, ch2On: Boolean): List<ChannelFrame>? {
         val c = connection ?: run { dbg = "нема connection"; return null }
         val ep = epIn ?: run { dbg = "нема epIn"; return null }
         val epO = epOut ?: run { dbg = "нема epOut"; return null }
         val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0)
-        if (trg == null) { dbg = "TRG_D: нема відповіді"; return null }
+        if (trg == null) { dbg = "TRG_D нема"; return null }
         val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0)
-        if (fin == null) { dbg = "FIN: нема відповіді"; return null }
+        if (fin == null) { dbg = "FIN нема"; return null }
         lastTrg = trg; lastFin = fin
+        if (trg == 0 && fin <= 0) { dbg = "дані не готові (T=0 F=0)"; return null }
         val cmd = VdsProtocol.packCmd(VdsProtocol.ADD_GETDATA, 2, VdsProtocol.chlFlag(ch1On, ch2On))
         if (c.bulkTransfer(epO, cmd, cmd.size, 1000) != cmd.size) { dbg = "GETDATA: запис не вдався"; return null }
         val onCount = (if (ch1On) 1 else 0) + (if (ch2On) 1 else 0)
@@ -175,12 +179,10 @@ class ScopeUsb(private val ctx: Context) {
             val pkt = ByteArray(VdsProtocol.PACKET_LEN)
             var total = 0
             while (total < VdsProtocol.PACKET_LEN) {
-                val n = c.bulkTransfer(ep, buf, buf.size, 2000)
-                if (n <= 0) { dbg = "пакет$idx: таймаут n=$n отримано=$total"; return null }
-                if (total == 0 && n == 5 && buf[0] == 0x45.toByte()) { dbg = "EBUSY (E)"; return null }
-                if (total == 0 && n < VdsProtocol.PACKET_LEN) {
-                    dbg = "пакет$idx: перша частина n=$n b0=${"%02x".format(buf[0])}"
-                }
+                val tmo = if (total == 0) 3000 else 1000
+                val n = c.bulkTransfer(ep, buf, buf.size, tmo)
+                if (n <= 0) { dbg = "пак$idx таймаут=$tmo отримано=$total"; return null }
+                if (total == 0 && n == 5 && buf[0] == 0x45.toByte()) { dbg = "EBUSY"; return null }
                 val take = minOf(n, VdsProtocol.PACKET_LEN - total)
                 System.arraycopy(buf, 0, pkt, total, take)
                 total += take
