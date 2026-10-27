@@ -51,11 +51,16 @@ class ScopeView @JvmOverloads constructor(
         val d = data ?: return
         if (d.isEmpty()) return
         val step = w / d.size
+        // семпли знакові: -125..+125, нуль у центрі екрана (як в офіційному ПЗ)
+        fun yOf(b: Byte): Float {
+            val v = b.toInt().coerceIn(-125, 125)
+            return h / 2f - v / 125f * (h / 2f)
+        }
         var prevX = 0f
-        var prevY = h - (d[0].toInt() and 0xFF) / 255f * h
+        var prevY = yOf(d[0])
         for (i in 1 until d.size) {
             val x = i * step
-            val y = h - (d[i].toInt() and 0xFF) / 255f * h
+            val y = yOf(d[i])
             c.drawLine(prevX, prevY, x, y, p)
             prevX = x; prevY = y
         }

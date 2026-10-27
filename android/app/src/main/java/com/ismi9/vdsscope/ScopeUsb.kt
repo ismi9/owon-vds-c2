@@ -126,7 +126,10 @@ class ScopeUsb(private val ctx: Context) {
         val chl = p[dmOff].toInt()
         val timeSum = VdsProtocol.readIntLE(p, dmOff + 1)
         val peroidNum = VdsProtocol.readIntLE(p, dmOff + 5)
-        val samples = p.copyOfRange(dmOff + 11, dmOff + 11 + 2500)
+        // DM-блок: [chl u8][time_sum u32][peroid u32][slow u16] = 11 байт заголовка,
+        // далі семпли; офіційне ПЗ відкидає по 50 байтів з країв (trimNgetADCByteBuffer)
+        val all = p.copyOfRange(dmOff, dmOff + VdsProtocol.DM_LEN)
+        val samples = all.copyOfRange(50, all.size - 50)
         return ChannelFrame(chl, timeSum, peroidNum, samples)
     }
 

@@ -155,7 +155,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     Thread.sleep(50)
                 } else {
-                    Thread.sleep(120) // EBUSY — тригер не спрацював
+                    // EBUSY — тригер не спрацював: форсуємо (FORCETRG_ADD = 12 для VDS1022)
+                    scope.writeCmd(12, 1, (if (cbCh1.isChecked) 1 else 0) or (if (cbCh2.isChecked) 2 else 0))
+                    Thread.sleep(120)
                 }
             }
         }.also { it.start() }
