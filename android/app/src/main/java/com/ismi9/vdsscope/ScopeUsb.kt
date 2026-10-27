@@ -69,11 +69,40 @@ class ScopeUsb(private val ctx: Context) {
 
     val isConnected: Boolean get() = connection != null
 
-    fun writeCmd(add: Int, bytes: Int, value: Int): Boolean {
+    /** Лише запис, без читання відповіді (для GETDATA тощо) */
+    fun writeCmdNoAck(add: Int, bytes: Int, value: Int): Boolean {
         val c = connection ?: return false
         val ep = epOut ?: return false
         val cmd = VdsProtocol.packCmd(add, bytes, value)
         return c.bulkTransfer(ep, cmd, cmd.size, 1000) == cmd.size
+    }
+
+    /** Команда запису + обов'язкове читання 5-байтової відповіді, як Sendable/JobUnit_I */
+    fun writeCmd(add: Int, bytes: Int, value: Int): Boolean {
+        if (!writeCmdNoAck(add, bytes, value)) return false
+        return readResponse() != null
+    }
+
+    /** sendCMDbyBytes: значення розбивається на окремі 1-байтові команди з адресами add, add+1, ... */
+    fun writeCmdBytes(add: Int, bytes: Int, value: Int): Boolean {
+        var ok = true
+        for (i in 0 until bytes) {
+            val v = (value ushr (i shl 3)) and 0xFF
+            if (!writeCmd(add + i, 1, v)) ok = false
+        }
+        return ok
+    }
+
+    /** Скинути залишки відповідей з IN-ендпоінта */
+    fun drain() {
+        val c = connection ?: return
+        val ep = epIn ?: return
+        val tmp = ByteArray(65536)
+        var guard = 0
+        while (guard++ < 20) {
+            val n = c.bulkTransfer(ep, tmp, tmp.size, 30)
+            if (n <= 0) break
+        }
     }
 
     /** Сирий запис довільного буфера (OUT) */
@@ -110,7 +139,7 @@ class ScopeUsb(private val ctx: Context) {
         val c = connection ?: return null
         val ep = epIn ?: return null
         val buf = ByteArray(VdsProtocol.RESP_LEN)
-        val n = c.bulkTransfer(ep, buf, buf.size, 1000)
+        val n = c.bulkTransfer(ep, buf, buf.size, 1500)
         if (n < VdsProtocol.RESP_LEN) return null
         return VdsProtocol.respValue(buf)
     }

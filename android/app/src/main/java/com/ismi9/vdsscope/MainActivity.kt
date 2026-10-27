@@ -179,7 +179,7 @@ class MainActivity : AppCompatActivity() {
                     Thread.sleep(50)
                 } else {
                     // EBUSY — тригер не спрацював: форсуємо (FORCETRG_ADD=12, маска каналів)
-                    scope.writeCmd(12, 1, (if (cbCh1.isChecked) 1 else 0) or (if (cbCh2.isChecked) 2 else 0))
+                    scope.drain()
                     runOnUiThread { status.text = "Нема кадру [${scope.dbg}] T${scope.lastTrg} F${scope.lastFin}" }
                     Thread.sleep(120)
                 }

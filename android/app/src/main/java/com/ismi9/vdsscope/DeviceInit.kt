@@ -131,11 +131,13 @@ class DeviceInit(private val ctx: Context, private val usb: ScopeUsb) {
     // ---------- Конфіг запису ----------
     /** Параметри як у Submitor2: c_dm, c_sample, c_htp, канали */
     fun configureAcquisition(info: DeviceInfo, ch1On: Boolean, ch2On: Boolean, vb1: Int, vb2: Int, tbIdx: Int) {
+        usb.drain()
+        usb.drain()
         usb.writeCmd(VdsProtocol.ADD_DM, 2, VdsProtocol.DM_LEN)           // 5000+50+50
         usb.writeCmd(VdsProtocol.ADD_SAMPLE, 1, 0)                          // не peak-detect
         val half = VdsProtocol.DM_LEN shr 1
-        repeat(2) { usb.writeCmd(VdsProtocol.ADD_PRE_TRG, 2, half) }
-        repeat(2) { usb.writeCmd(VdsProtocol.ADD_SUF_TRG, 4, half) }
+        repeat(2) { usb.writeCmdBytes(VdsProtocol.ADD_PRE_TRG, 2, half) }
+        repeat(2) { usb.writeCmdBytes(VdsProtocol.ADD_SUF_TRG, 4, half) }
         usb.writeCmd(VdsProtocol.ADD_EMPTY, 1, 1)
 
         // канали: прапор + gain + zero (калібровані)
