@@ -95,6 +95,12 @@ class MainActivity : AppCompatActivity() {
     private fun connect() {
         val dev = scope.findDevice()
         if (dev == null) {
+            // Діагностика: показати всі USB-пристрої, які бачить телефон
+            val all = scope.usbManager.deviceList.values
+            val list = if (all.isEmpty()) "(нічого не підключено)" else all.joinToString(", ") {
+                "%04x:%04x".format(it.vendorId, it.productId)
+            }
+            status.text = "USB: $list"
             toast("Прилад OWON VDS не знайдено (перевір OTG)")
             return
         }

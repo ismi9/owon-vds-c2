@@ -14,7 +14,7 @@ import android.os.Build
 data class ChannelFrame(val chl: Int, val timeSum: Int, val peroidNum: Int, val samples: ByteArray)
 
 class ScopeUsb(private val ctx: Context) {
-    private val usbManager = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
+    val usbManager = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
     private var connection: UsbDeviceConnection? = null
     private var usbIf: UsbInterface? = null
     private var epOut: UsbEndpoint? = null
