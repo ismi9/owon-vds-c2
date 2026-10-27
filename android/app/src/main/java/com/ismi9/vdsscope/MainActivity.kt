@@ -238,15 +238,25 @@ class MainActivity : AppCompatActivity() {
                 val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
                 if (frames != null) {
                     framesCount++
+                    val tbLabel = VdsProtocol.TIMEBASE_LABELS[spTimebase.selectedItemPosition]
+                    val tpp = Measure.labelToSeconds(tbLabel) /
+                        (frames.first().samples.size / 10.0)
                     var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}"
                     runOnUiThread {
                         for (f in frames) {
-                            var mn = 127; var mx = -128
-                            for (b in f.samples) { val v = b.toInt(); if (v < mn) mn = v; if (v > mx) mx = v }
-                            stat += "  CH${f.chl + 1}[$mn..$mx]"
+                            // програмний тригер: фронт завжди на 1/4 сітки
+                            val shown = Measure.alignRise(f.samples) ?: f.samples
+                            val vbLabel = when (f.chl) {
+                                0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
+                                else -> VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
+                            }
+                            val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
+                            val fq = Measure.freqHz(f.samples, tpp)
+                            stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)} Vpp=" +
+                                (if (vpp != null) "%.2fV".format(vpp) else "--")
                             when (f.chl) {
-                                0 -> scopeView.ch1 = f.samples
-                                1 -> scopeView.ch2 = f.samples
+                                0 -> scopeView.ch1 = shown
+                                1 -> scopeView.ch2 = shown
                             }
                         }
                         scopeView.invalidate()
@@ -271,9 +281,10 @@ class MainActivity : AppCompatActivity() {
                 if (frames != null) {
                     runOnUiThread {
                         for (f in frames) {
+                            val shown = Measure.alignRise(f.samples) ?: f.samples
                             when (f.chl) {
-                                0 -> scopeView.ch1 = f.samples
-                                1 -> scopeView.ch2 = f.samples
+                                0 -> scopeView.ch1 = shown
+                                1 -> scopeView.ch2 = shown
                             }
                         }
                         scopeView.invalidate()
