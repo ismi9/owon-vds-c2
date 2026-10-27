@@ -27,12 +27,16 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var running = false
     private var pollThread: Thread? = null
     private var framesCount = 0
+    private var devInfo: DeviceInfo? = null
+    private lateinit var init: DeviceInit
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         scope = ScopeUsb(this)
+        init = DeviceInit(this, scope)
+        init.log = { m -> runOnUiThread { status.text = m } }
         scopeView = findViewById(R.id.scopeView)
         status = findViewById(R.id.status)
         cbCh1 = findViewById(R.id.cbCh1)
@@ -66,12 +70,12 @@ class MainActivity : AppCompatActivity() {
         }
         spVolt1.onItemSelectedListener = object : SimpleSel() {
             override fun onSel(pos: Int) {
-                scope.writeCmd(VdsProtocol.ADD_CHANNEL_CH1, 1, pos)
+                devInfo?.let { init.applyChannel(it, 0, cbCh1.isChecked, pos) }
             }
         }
         spVolt2.onItemSelectedListener = object : SimpleSel() {
             override fun onSel(pos: Int) {
-                scope.writeCmd(VdsProtocol.ADD_CHANNEL_CH2, 1, pos)
+                devInfo?.let { init.applyChannel(it, 1, cbCh2.isChecked, pos) }
             }
         }
 
@@ -107,27 +111,37 @@ class MainActivity : AppCompatActivity() {
             toast("Прилад не відповів на MACHINE_TYPE")
             return
         }
-        runOnUiThread {
-            val model = if (mt == 1) "VDS1022" else "код $mt"
-            status.text = "Підключено: $model"
-            applySettings()
-        }
+        status.text = "Підключено (тип $mt). Ініціалізація..."
+        Thread {
+            val info = init.run()
+            runOnUiThread {
+                if (info == null) {
+                    status.text = "Ініціалізація не вдалась (див. рядок вище)"
+                } else {
+                    devInfo = info
+                    status.text = "VDS1022 v${info.version} №${info.serial} готово" +
+                        (if (info.fpgaWasLoaded) " (FPGA завантажено)" else "")
+                    applySettings()
+                }
+            }
+        }.start()
     }
 
     @SuppressLint("SetTextI18n")
     private fun applySettings() {
-        writeTimebase(spTimebase.selectedItemPosition)
-        scope.writeCmd(VdsProtocol.ADD_CHANNEL_CH1, 1, spVolt1.selectedItemPosition)
-        scope.writeCmd(VdsProtocol.ADD_CHANNEL_CH2, 1, spVolt2.selectedItemPosition)
-        scope.writeCmd(
-            VdsProtocol.ADD_CHL_ON, 1,
-            (if (cbCh1.isChecked) 1 else 0) or (if (cbCh2.isChecked) 2 else 0)
+        val info = devInfo ?: return
+        init.configureAcquisition(
+            info, cbCh1.isChecked, cbCh2.isChecked,
+            spVolt1.selectedItemPosition, spVolt2.selectedItemPosition,
+            spTimebase.selectedItemPosition
         )
     }
 
     private fun writeTimebase(pos: Int) {
+        if (devInfo == null) return
         val div = VdsProtocol.SEPERATE_FREQ.getOrElse(pos) { 1 }
         scope.writeCmd(VdsProtocol.ADD_TIMEBASE, 4, div)
+        scope.writeCmd(VdsProtocol.ADD_SLOWMOVE, 1, if (pos >= 22) 1 else 0)
     }
 
     private fun toggleRun() {
@@ -148,7 +162,7 @@ class MainActivity : AppCompatActivity() {
                 val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
                 if (frames != null) {
                     framesCount++
-                    var stat = "Кадрів: $framesCount"
+                    var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}"
                     runOnUiThread {
                         for (f in frames) {
                             var mn = 127; var mx = -128

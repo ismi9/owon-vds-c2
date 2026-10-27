@@ -6,7 +6,7 @@ object VdsProtocol {
     const val PID = 0x1234
     const val RESP_LEN = 5
     const val PACKET_LEN = 5211      // пакет кадру каналу
-    const val DM_LEN = 5100
+    const val DM_LEN = 5100   // глибина 5000 + 50 + 50
     const val TRG_LEN = 100
     const val HDR_LEN = 11
 
@@ -27,6 +27,18 @@ object VdsProtocol {
     const val ADD_CHANNEL_CH1 = 273   // індекс чутливості 0..9
     const val ADD_CHANNEL_CH2 = 272
     const val ADD_GETDATA = 4096
+    const val ADD_FPGA_QUERY = 547
+    const val ADD_FPGA_DOWNLOAD = 16384
+    const val ADD_READ_FLASH = 432
+    const val ADD_WRITE_FLASH = 416
+    const val ADD_DATAFINISHED = 122
+    const val ADD_DM = 92
+    const val ADD_PRE_TRG = 90
+    const val ADD_SUF_TRG = 86
+    const val ADD_SAMPLE = 9
+    const val ADD_EMPTY = 268
+    const val ADD_FORCETRG = 12
+    const val FLASH_SIZE = 2002
     const val ADD_MACHINE_TYPE = 16385
     const val MACHINE_TYPE_VALUE = 86 // 'V'
 

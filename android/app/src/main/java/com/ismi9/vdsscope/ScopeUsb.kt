@@ -21,6 +21,8 @@ class ScopeUsb(private val ctx: Context) {
     private var epIn: UsbEndpoint? = null
     var connectedDevice: UsbDevice? = null
         private set
+    @Volatile var lastTrg = 0
+    @Volatile var lastFin = 0
 
     fun findDevice(): UsbDevice? =
         usbManager.deviceList.values.firstOrNull {
@@ -73,6 +75,35 @@ class ScopeUsb(private val ctx: Context) {
         return c.bulkTransfer(ep, cmd, cmd.size, 1000) == cmd.size
     }
 
+    /** Сирий запис довільного буфера (OUT) */
+    fun writeRaw(data: ByteArray): Boolean {
+        val c = connection ?: return false
+        val ep = epOut ?: return false
+        var off = 0
+        while (off < data.size) {
+            val chunk = minOf(data.size - off, 16384)
+            val n = c.bulkTransfer(ep, data, off, chunk, 2000)
+            if (n <= 0) return false
+            off += n
+        }
+        return true
+    }
+
+    /** Читає рівно len байтів з IN (кілька транзакцій) */
+    fun readExact(len: Int, timeout: Int): ByteArray? {
+        val c = connection ?: return null
+        val ep = epIn ?: return null
+        val out = ByteArray(len)
+        var got = 0
+        val tmp = ByteArray(maxOf(ep.maxPacketSize, 512) * 8)
+        val deadline = System.currentTimeMillis() + timeout
+        while (got < len && System.currentTimeMillis() < deadline) {
+            val n = c.bulkTransfer(ep, tmp, minOf(tmp.size, len - got).coerceAtLeast(1), 500)
+            if (n > 0) { System.arraycopy(tmp, 0, out, got, minOf(n, len - got)); got += n }
+        }
+        return if (got >= len) out else null
+    }
+
     /** Читання відповіді 5 байтів; null = таймаут/помилка */
     fun readResponse(): Int? {
         val c = connection ?: return null
@@ -98,6 +129,11 @@ class ScopeUsb(private val ctx: Context) {
         val c = connection ?: return null
         val ep = epIn ?: return null
         val epO = epOut ?: return null
+        // як TrgStatusInvestigator: TRG_D (1), datafinished (122)
+        val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0) ?: return null
+        val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0) ?: return null
+        lastTrg = trg; lastFin = fin
+        if (trg == 0 && Math.abs(fin) <= 0) return null   // ще нема даних
         val cmd = VdsProtocol.packCmd(
             VdsProtocol.ADD_GETDATA, 2, VdsProtocol.chlFlag(ch1On, ch2On)
         )
