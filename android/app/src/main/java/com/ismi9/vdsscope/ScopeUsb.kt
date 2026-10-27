@@ -80,7 +80,9 @@ class ScopeUsb(private val ctx: Context) {
     /** Команда запису + обов'язкове читання 5-байтової відповіді, як Sendable/JobUnit_I */
     fun writeCmd(add: Int, bytes: Int, value: Int): Boolean {
         if (!writeCmdNoAck(add, bytes, value)) return false
-        return readResponse() != null
+        val ack = readResponse()
+        if (ack == null) { drain() }
+        return ack != null
     }
 
     /** sendCMDbyBytes: значення розбивається на окремі 1-байтові команди з адресами add, add+1, ... */

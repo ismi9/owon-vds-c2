@@ -47,7 +47,8 @@ class DeviceInit(private val ctx: Context, private val usb: ScopeUsb) {
 
     // ---------- Флеш ----------
     private fun readFlash(): ByteArray? {
-        if (!usb.writeCmd(VdsProtocol.ADD_READ_FLASH, 1, 1)) return null
+        // ВАЖЛИВО: READ_FLASH відповідає 2002 байтами даних, тому без читання 5-байтового ack
+        if (!usb.writeCmdNoAck(VdsProtocol.ADD_READ_FLASH, 1, 1)) return null
         val buf = usb.readExact(VdsProtocol.FLASH_SIZE, 3000) ?: return null
         if (buf[0] != 0xAA.toByte() || buf[1] != 0x55.toByte()) {
             log("Флеш: немає магії AA55 (${"%02x".format(buf[0])} ${"%02x".format(buf[1])})")
