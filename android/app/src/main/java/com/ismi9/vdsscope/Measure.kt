@@ -121,8 +121,7 @@ object Measure {
     }
 
     /**
-     * Розмах у вольтах: (max-min) кодів × 4 поділки/125 кодів × V/div.
-     * Це шкала екрана: 125 кодів = 4 поділки (від центру до краю).
+     * Розмах у вольтах: (max-min) кодів × 0.04 × V/div (формула MeasureADC офіційного ПЗ).
      */
     fun vppVolts(samples: ByteArray, voltPerDiv: Double): Double? {
         if (samples.isEmpty() || voltPerDiv <= 0.0) return null
@@ -132,6 +131,6 @@ object Measure {
             if (v < mn) mn = v
             if (v > mx) mx = v
         }
-        return (mx - mn) * voltPerDiv * 4.0 / 125.0
+        return (mx - mn) * voltPerDiv * 0.04   // як ПК-ПЗ: Vconst = 0.04 * V/div (25 кодів на поділку)
     }
 }

@@ -253,8 +253,11 @@ class MainActivity : AppCompatActivity() {
                             }
                             val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
                             val fq = Measure.freqHz(f.samples, tpp)
+                            var cmn = 127; var cmx = -128
+                            for (b in f.samples) { val v = b.toInt(); if (v < cmn) cmn = v; if (v > cmx) cmx = v }
                             stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)} Vpp=" +
-                                (if (vpp != null) "%.2fV".format(vpp) else "--")
+                                (if (vpp != null) "%.2fV".format(vpp) else "--") +
+                                " [$vbLabel, коди ${cmn}..${cmx}]"
                             when (f.chl) {
                                 0 -> scopeView.ch1 = shown
                                 1 -> scopeView.ch2 = shown

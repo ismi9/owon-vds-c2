@@ -52,9 +52,10 @@ class ScopeView @JvmOverloads constructor(
         if (d.isEmpty()) return
         val step = w / d.size
         // семпли знакові: -125..+125, нуль у центрі екрана (як в офіційному ПЗ)
+        // 25 кодів на поділку, 8 поділок по вертикалі (±4), як у ПК-ПЗ
         fun yOf(b: Byte): Float {
-            val v = b.toInt().coerceIn(-125, 125)
-            return h / 2f - v / 125f * (h / 2f)
+            val v = b.toInt().coerceIn(-100, 100)
+            return h / 2f - v / 100f * (h / 2f)
         }
         var prevX = 0f
         var prevY = yOf(d[0])
