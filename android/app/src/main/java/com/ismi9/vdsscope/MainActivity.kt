@@ -55,11 +55,17 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(c: Context?, i: Intent?) {
             when (i?.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    val st = usbBusStatus(); status.text = st
-                    val dev = scope.findDevice()
-                    if (dev != null && !scope.isConnected) {
-                        if (scope.hasPermission(dev)) connect() else scope.requestPermission(dev) { connect() }
-                    }
+                    status.text = usbBusStatus()
+                    // Дамо MCU приладу 1.5с на старт після подачі живлення
+                    Thread {
+                        Thread.sleep(1500)
+                        runOnUiThread {
+                            val dev = scope.findDevice()
+                            if (dev != null && !scope.isConnected) {
+                                if (scope.hasPermission(dev)) connect() else scope.requestPermission(dev) { connect() }
+                            }
+                        }
+                    }.start()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     running = false; scope.disconnect()
@@ -162,18 +168,28 @@ class MainActivity : AppCompatActivity() {
             scope.requestPermission(dev) { connect() }
             return
         }
-        if (!scope.connect(dev)) {
-            toast("Не вдалося відкрити USB-інтерфейс")
-            return
-        }
-        val mt = scope.queryMachineType()
-        if (mt == null || mt <= 0) {
-            scope.disconnect()
-            toast("Прилад не відповів на MACHINE_TYPE")
-            return
-        }
-        status.text = "Підключено (тип $mt). Ініціалізація..."
+        // Хендшейк у фоновому потоці з повторами: MCU стартує до ~5с після подачі живлення
         Thread {
+            if (!scope.connect(dev)) {
+                runOnUiThread { toast("Не вдалося відкрити USB-інтерфейс") }
+                return@Thread
+            }
+            var mt: Int? = null
+            for (i in 1..6) {
+                mt = scope.queryMachineType()
+                if (mt != null && mt > 0) break
+                runOnUiThread { status.text = "Прилад стартує... спроба $i/6" }
+                Thread.sleep(1000)
+            }
+            if (mt == null || mt <= 0) {
+                scope.disconnect()
+                runOnUiThread {
+                    toast("MACHINE_TYPE: нема відповіді. Витягни OTG на 5с і встав знову")
+                    status.text = usbBusStatus() + " — знову ПІДКЛЮЧИТИ"
+                }
+                return@Thread
+            }
+            runOnUiThread { status.text = "Підключено (тип $mt). Ініціалізація..." }
             val info = init.run()
             runOnUiThread {
                 if (info == null) {
