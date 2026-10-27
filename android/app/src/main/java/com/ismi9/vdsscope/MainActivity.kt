@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private var pollThread: Thread? = null
     private var framesCount = 0
     private var devInfo: DeviceInfo? = null
+    private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private lateinit var init: DeviceInit
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -130,11 +131,10 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun applySettings() {
         val info = devInfo ?: return
-        init.configureAcquisition(
-            info, cbCh1.isChecked, cbCh2.isChecked,
-            spVolt1.selectedItemPosition, spVolt2.selectedItemPosition,
-            spTimebase.selectedItemPosition
-        )
+        val c1 = cbCh1.isChecked; val c2 = cbCh2.isChecked
+        val v1 = spVolt1.selectedItemPosition; val v2 = spVolt2.selectedItemPosition
+        val tb = spTimebase.selectedItemPosition
+        usbExecutor.execute { init.configureAcquisition(info, c1, c2, v1, v2, tb) }
     }
 
     private fun writeTimebase(pos: Int) {
@@ -148,16 +148,16 @@ class MainActivity : AppCompatActivity() {
         if (running) {
             running = false
             btnRun.text = getString(R.string.run)
-            scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 1)  // STOP=1 (sendStopThen)
+            usbExecutor.execute { scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 1) }  // STOP=1
             return
         }
         if (!scope.isConnected) { toast("Спершу підключи прилад"); return }
-        applySettings()
-        scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)  // свіжий збір
-        scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)     // RUN=0 (sendRun)
         running = true
         btnRun.text = getString(R.string.stop)
         pollThread = Thread {
+            applySettings()
+            scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)  // свіжий збір
+            scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)     // RUN=0 (sendRun)
             while (running) {
                 val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
                 if (frames != null) {

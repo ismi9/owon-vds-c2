@@ -70,7 +70,7 @@ class ScopeUsb(private val ctx: Context) {
     val isConnected: Boolean get() = connection != null
 
     /** Лише запис, без читання відповіді (для GETDATA тощо) */
-    fun writeCmdNoAck(add: Int, bytes: Int, value: Int): Boolean {
+    @Synchronized fun writeCmdNoAck(add: Int, bytes: Int, value: Int): Boolean {
         val c = connection ?: return false
         val ep = epOut ?: return false
         val cmd = VdsProtocol.packCmd(add, bytes, value)
@@ -78,7 +78,7 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** Команда запису + обов'язкове читання 5-байтової відповіді, як Sendable/JobUnit_I */
-    fun writeCmd(add: Int, bytes: Int, value: Int): Boolean {
+    @Synchronized fun writeCmd(add: Int, bytes: Int, value: Int): Boolean {
         if (!writeCmdNoAck(add, bytes, value)) return false
         val ack = readResponse()
         if (ack == null) { drain() }
@@ -86,7 +86,7 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** sendCMDbyBytes: значення розбивається на окремі 1-байтові команди з адресами add, add+1, ... */
-    fun writeCmdBytes(add: Int, bytes: Int, value: Int): Boolean {
+    @Synchronized fun writeCmdBytes(add: Int, bytes: Int, value: Int): Boolean {
         var ok = true
         for (i in 0 until bytes) {
             val v = (value ushr (i shl 3)) and 0xFF
@@ -96,19 +96,19 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** Скинути залишки відповідей з IN-ендпоінта */
-    fun drain() {
+    @Synchronized fun drain() {
         val c = connection ?: return
         val ep = epIn ?: return
         val tmp = ByteArray(65536)
         var guard = 0
-        while (guard++ < 20) {
-            val n = c.bulkTransfer(ep, tmp, tmp.size, 30)
+        while (guard++ < 8) {
+            val n = c.bulkTransfer(ep, tmp, tmp.size, 20)
             if (n <= 0) break
         }
     }
 
     /** Сирий запис довільного буфера (OUT) */
-    fun writeRaw(data: ByteArray): Boolean {
+    @Synchronized fun writeRaw(data: ByteArray): Boolean {
         val c = connection ?: return false
         val ep = epOut ?: return false
         var off = 0
@@ -122,7 +122,7 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** Читає рівно len байтів з IN (кілька транзакцій) */
-    fun readExact(len: Int, timeout: Int): ByteArray? {
+    @Synchronized fun readExact(len: Int, timeout: Int): ByteArray? {
         val c = connection ?: return null
         val ep = epIn ?: return null
         val out = ByteArray(len)
@@ -137,17 +137,17 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** Читання відповіді 5 байтів; null = таймаут/помилка */
-    fun readResponse(): Int? {
+    @Synchronized fun readResponse(): Int? {
         val c = connection ?: return null
         val ep = epIn ?: return null
         val buf = ByteArray(VdsProtocol.RESP_LEN)
-        val n = c.bulkTransfer(ep, buf, buf.size, 1500)
+        val n = c.bulkTransfer(ep, buf, buf.size, 400)
         if (n < VdsProtocol.RESP_LEN) return null
         return VdsProtocol.respValue(buf)
     }
 
     /** Команда + відповідь */
-    fun sendCmd(add: Int, bytes: Int, value: Int): Int? {
+    @Synchronized fun sendCmd(add: Int, bytes: Int, value: Int): Int? {
         if (!writeCmd(add, bytes, value)) return null
         return readResponse()
     }
@@ -157,7 +157,7 @@ class ScopeUsb(private val ctx: Context) {
         sendCmd(VdsProtocol.ADD_MACHINE_TYPE, 1, VdsProtocol.MACHINE_TYPE_VALUE)
 
     /** Читання кадру: n каналових пакетів. Повертає null при EBUSY. */
-    fun readFrame(ch1On: Boolean, ch2On: Boolean): List<ChannelFrame>? {
+    @Synchronized fun readFrame(ch1On: Boolean, ch2On: Boolean): List<ChannelFrame>? {
         val c = connection ?: run { dbg = "нема connection"; return null }
         val ep = epIn ?: run { dbg = "нема epIn"; return null }
         val epO = epOut ?: run { dbg = "нема epOut"; return null }
