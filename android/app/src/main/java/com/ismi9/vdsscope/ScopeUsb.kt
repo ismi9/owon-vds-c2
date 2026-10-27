@@ -22,6 +22,7 @@ class ScopeUsb(private val ctx: Context) {
     var connectedDevice: UsbDevice? = null
         private set
     @Volatile var lastTrg = 0
+    @Volatile var dbg = ""
     @Volatile var lastFin = 0
 
     fun findDevice(): UsbDevice? =
@@ -126,32 +127,36 @@ class ScopeUsb(private val ctx: Context) {
 
     /** Читання кадру: n каналових пакетів. Повертає null при EBUSY. */
     fun readFrame(ch1On: Boolean, ch2On: Boolean): List<ChannelFrame>? {
-        val c = connection ?: return null
-        val ep = epIn ?: return null
-        val epO = epOut ?: return null
-        // як TrgStatusInvestigator: TRG_D (1), datafinished (122)
-        val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0) ?: return null
-        val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0) ?: return null
+        val c = connection ?: run { dbg = "нема connection"; return null }
+        val ep = epIn ?: run { dbg = "нема epIn"; return null }
+        val epO = epOut ?: run { dbg = "нема epOut"; return null }
+        val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0)
+        if (trg == null) { dbg = "TRG_D: нема відповіді"; return null }
+        val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0)
+        if (fin == null) { dbg = "FIN: нема відповіді"; return null }
         lastTrg = trg; lastFin = fin
-        val cmd = VdsProtocol.packCmd(
-            VdsProtocol.ADD_GETDATA, 2, VdsProtocol.chlFlag(ch1On, ch2On)
-        )
-        if (c.bulkTransfer(epO, cmd, cmd.size, 1000) != cmd.size) return null
+        val cmd = VdsProtocol.packCmd(VdsProtocol.ADD_GETDATA, 2, VdsProtocol.chlFlag(ch1On, ch2On))
+        if (c.bulkTransfer(epO, cmd, cmd.size, 1000) != cmd.size) { dbg = "GETDATA: запис не вдався"; return null }
         val onCount = (if (ch1On) 1 else 0) + (if (ch2On) 1 else 0)
-        val pkt = ByteArray(VdsProtocol.PACKET_LEN)
         val frames = ArrayList<ChannelFrame>(onCount)
-        repeat(onCount) {
+        val buf = ByteArray(65536)
+        repeat(onCount) { idx ->
+            val pkt = ByteArray(VdsProtocol.PACKET_LEN)
             var total = 0
             while (total < VdsProtocol.PACKET_LEN) {
-                val n = c.bulkTransfer(ep, pkt, VdsProtocol.PACKET_LEN, 3000)
-                if (n <= 0) return null
-                // 'EBUSY' відповідається першим байтом 0x45 ('E')
-                if (total == 0 && n >= 5 && pkt[0] == 0x45.toByte()) return null
-                total += n
-                if (total > VdsProtocol.PACKET_LEN) return null
+                val n = c.bulkTransfer(ep, buf, buf.size, 2000)
+                if (n <= 0) { dbg = "пакет$idx: таймаут n=$n отримано=$total"; return null }
+                if (total == 0 && n == 5 && buf[0] == 0x45.toByte()) { dbg = "EBUSY (E)"; return null }
+                if (total == 0 && n < VdsProtocol.PACKET_LEN) {
+                    dbg = "пакет$idx: перша частина n=$n b0=${"%02x".format(buf[0])}"
+                }
+                val take = minOf(n, VdsProtocol.PACKET_LEN - total)
+                System.arraycopy(buf, 0, pkt, total, take)
+                total += take
             }
             frames.add(parsePacket(pkt))
         }
+        dbg = "ok"
         return frames
     }
 
