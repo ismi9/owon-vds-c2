@@ -27,6 +27,7 @@ object VdsProtocol {
     const val ADD_CHANNEL_CH1 = 273   // індекс чутливості 0..9
     const val ADD_CHANNEL_CH2 = 272
     const val ADD_GETDATA = 4096
+    const val ADD_TRG = 36
     const val ADD_FPGA_QUERY = 547
     const val ADD_FPGA_DOWNLOAD = 16384
     const val ADD_READ_FLASH = 432

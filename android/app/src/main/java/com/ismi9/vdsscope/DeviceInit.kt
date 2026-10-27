@@ -55,14 +55,17 @@ class DeviceInit(private val ctx: Context, private val usb: ScopeUsb) {
         return buf
     }
 
-    /** device-партиція починається з 6+1000 = 1006: [oem u8][version\0][serial\0]... */
+    /** Register: factory-партиція (зміщення 6) + 200 = 206: [oem u8][version\0][serial\0]... */
     private fun parseRegister(flash: ByteArray): Pair<String, String> {
-        var p = 6 + 1000
+        var p = 6 + 200
         p++ // oem
         fun str(): String {
             val sb = StringBuilder()
             var n = 0
-            while (p < flash.size && flash[p] != 0.toByte() && n++ < 100) { sb.append((flash[p].toInt() and 0xFF).toChar()); p++ }
+            while (p < flash.size && flash[p] != 0.toByte() && n++ < 100) {
+                val c = flash[p].toInt() and 0xFF
+                sb.append(if (c in 32..126) c.toChar() else '?'); p++
+            }
             p++
             return sb.toString()
         }

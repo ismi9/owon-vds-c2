@@ -133,7 +133,6 @@ class ScopeUsb(private val ctx: Context) {
         val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0) ?: return null
         val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0) ?: return null
         lastTrg = trg; lastFin = fin
-        if (trg == 0 && Math.abs(fin) <= 0) return null   // ще нема даних
         val cmd = VdsProtocol.packCmd(
             VdsProtocol.ADD_GETDATA, 2, VdsProtocol.chlFlag(ch1On, ch2On)
         )
