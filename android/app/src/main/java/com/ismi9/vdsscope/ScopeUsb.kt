@@ -146,7 +146,7 @@ class ScopeUsb(private val ctx: Context) {
 
     /** Команда + відповідь */
     @Synchronized fun sendCmd(add: Int, bytes: Int, value: Int): Int? {
-        if (!writeCmd(add, bytes, value)) return null
+        if (!writeCmdNoAck(add, bytes, value)) return null
         return readResponse()
     }
 
