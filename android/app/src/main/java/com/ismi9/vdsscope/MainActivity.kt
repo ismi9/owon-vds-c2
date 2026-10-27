@@ -1,6 +1,12 @@
 package com.ismi9.vdsscope
 
 import android.annotation.SuppressLint
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -30,6 +36,38 @@ class MainActivity : AppCompatActivity() {
     private var devInfo: DeviceInfo? = null
     private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private lateinit var init: DeviceInit
+
+    private val ACTION_USB_PERMISSION = "com.ismi9.vdsscope.USB_PERMISSION"
+
+    /** Живий стан USB-шини одним рядком */
+    private fun usbBusStatus(): String {
+        val all = scope.usbManager.deviceList.values
+        val dev = all.firstOrNull { it.vendorId == VdsProtocol.VID && it.productId == VdsProtocol.PID }
+        return if (dev == null) {
+            "USB: " + (if (all.isEmpty()) "порожньо (прилад не бачать)" else
+                all.joinToString(", ") { "%04x:%04x".format(it.vendorId, it.productId) })
+        } else {
+            "Прилад 5345:1234 є, " + (if (scope.usbManager.hasPermission(dev)) "дозвіл OK" else "без дозволу")
+        }
+    }
+
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) {
+            when (i?.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    val st = usbBusStatus(); status.text = st
+                    val dev = scope.findDevice()
+                    if (dev != null && !scope.isConnected) {
+                        if (scope.hasPermission(dev)) connect() else scope.requestPermission(dev) { connect() }
+                    }
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    running = false; scope.disconnect()
+                    status.text = "Прилад від'єднано"
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +100,12 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnConnect).setOnClickListener { connect() }
         btnRun.setOnClickListener { toggleRun() }
+
+        registerReceiver(usbReceiver, IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        })
+        status.text = usbBusStatus()
         findViewById<Button>(R.id.btnSingle).setOnClickListener { singleShot() }
 
         spTimebase.onItemSelectedListener = object : SimpleSel() {
@@ -95,13 +139,23 @@ class MainActivity : AppCompatActivity() {
     private fun connect() {
         val dev = scope.findDevice()
         if (dev == null) {
-            // Діагностика: показати всі USB-пристрої, які бачить телефон
-            val all = scope.usbManager.deviceList.values
-            val list = if (all.isEmpty()) "(нічого не підключено)" else all.joinToString(", ") {
-                "%04x:%04x".format(it.vendorId, it.productId)
-            }
-            status.text = "USB: $list"
-            toast("Прилад OWON VDS не знайдено (перевір OTG)")
+            status.text = usbBusStatus() + " — сканую 10с..."
+            toast("Прилад не знайдено, сканую 10с — встав тепер OTG")
+            // Фоновий рескан: прилад може стартувати кілька секунд після вставляння
+            Thread {
+                for (i in 1..20) {
+                    Thread.sleep(500)
+                    val d = scope.findDevice()
+                    if (d != null) {
+                        runOnUiThread {
+                            if (scope.hasPermission(d)) connect() else scope.requestPermission(d) { connect() }
+                        }
+                        return@Thread
+                    }
+                    if (i % 4 == 0) runOnUiThread { status.text = usbBusStatus() + " — ще шукаю..." }
+                }
+                runOnUiThread { status.text = usbBusStatus() + " — не з'явився за 10с" }
+            }.start()
             return
         }
         if (!scope.hasPermission(dev)) {
