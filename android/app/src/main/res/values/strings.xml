@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VDS C2 Scope</string>
+    <string name="connect">Підключити</string>
+    <string name="run">Пуск</string>
+    <string name="stop">Стоп</string>
+    <string name="single">Однокр.</string>
+    <string name="ch1">CH1</string>
+    <string name="ch2">CH2</string>
+    <string name="not_connected">Не підключено. Підключи осцилограф через OTG.</string>
+    <string name="connected_fmt">Підключено. Тип приладу: %d</string>
+</resources>
