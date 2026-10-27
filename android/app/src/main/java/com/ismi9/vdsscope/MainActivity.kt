@@ -26,6 +26,7 @@ class MainActivity : AppCompatActivity() {
 
     @Volatile private var running = false
     private var pollThread: Thread? = null
+    private var framesCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,7 +108,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         runOnUiThread {
-            status.text = getString(R.string.connected_fmt, mt)
+            val model = if (mt == 1) "VDS1022" else "код $mt"
+            status.text = "Підключено: $model"
             applySettings()
         }
     }
@@ -132,31 +134,39 @@ class MainActivity : AppCompatActivity() {
         if (running) {
             running = false
             btnRun.text = getString(R.string.run)
-            scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)
+            scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 1)  // STOP=1 (sendStopThen)
             return
         }
         if (!scope.isConnected) { toast("Спершу підключи прилад"); return }
         applySettings()
-        scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 1)
+        scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)  // свіжий збір
+        scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)     // RUN=0 (sendRun)
         running = true
         btnRun.text = getString(R.string.stop)
         pollThread = Thread {
             while (running) {
                 val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
                 if (frames != null) {
+                    framesCount++
+                    var stat = "Кадрів: $framesCount"
                     runOnUiThread {
                         for (f in frames) {
+                            var mn = 127; var mx = -128
+                            for (b in f.samples) { val v = b.toInt(); if (v < mn) mn = v; if (v > mx) mx = v }
+                            stat += "  CH${f.chl + 1}[$mn..$mx]"
                             when (f.chl) {
                                 0 -> scopeView.ch1 = f.samples
                                 1 -> scopeView.ch2 = f.samples
                             }
                         }
                         scopeView.invalidate()
+                        status.text = stat
                     }
                     Thread.sleep(50)
                 } else {
-                    // EBUSY — тригер не спрацював: форсуємо (FORCETRG_ADD = 12 для VDS1022)
+                    // EBUSY — тригер не спрацював: форсуємо (FORCETRG_ADD=12, маска каналів)
                     scope.writeCmd(12, 1, (if (cbCh1.isChecked) 1 else 0) or (if (cbCh2.isChecked) 2 else 0))
+                    runOnUiThread { status.text = "Очікування тригера (кадрів: $framesCount)..." }
                     Thread.sleep(120)
                 }
             }
