@@ -234,6 +234,7 @@ class MainActivity : AppCompatActivity() {
             applySettings()
             scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)  // свіжий збір
             scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)     // RUN=0 (sendRun)
+            var lastStatAt = 0L
             while (running) {
                 val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
                 if (frames != null) {
@@ -243,33 +244,37 @@ class MainActivity : AppCompatActivity() {
                     val tpp = VdsProtocol.SEPERATE_FREQ.getOrElse(tbIdx) { 1 } / 1e8
                     var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}" +
                         " S=" + Measure.formatSampleRate(1 / tpp)
-                    runOnUiThread {
-                        for (f in frames) {
-                            // програмний тригер: фронт на 1/4 сітки, вікно = 10 поділок
-                            val shown = Measure.displayWindow(f.samples)
-                            val vbLabel = when (f.chl) {
-                                0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
-                                else -> VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
-                            }
-                            val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
-                            val fq = Measure.freqHz(f.samples, tpp)
-                            var cmn = 127; var cmx = -128
-                            for (b in f.samples) { val v = b.toInt(); if (v < cmn) cmn = v; if (v > cmx) cmx = v }
-                            stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)} Vpp=" +
-                                (if (vpp != null) "%.2fV".format(vpp) else "--") +
-                                " [$vbLabel, коди ${cmn}..${cmx}]"
-                            when (f.chl) {
-                                0 -> scopeView.ch1 = shown
-                                1 -> scopeView.ch2 = shown
-                            }
+                    // обчислення (тригер-вікно, частота, Vpp) на робочому потоці — UI не блокуємо
+                    var show1: ByteArray? = null
+                    var show2: ByteArray? = null
+                    for (f in frames) {
+                        val shown = Measure.displayWindow(f.samples)
+                        when (f.chl) { 0 -> show1 = shown; 1 -> show2 = shown }
+                        val vbLabel = when (f.chl) {
+                            0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
+                            else -> VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
                         }
-                        scopeView.invalidate()
-                        status.text = stat
+                        val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
+                        val fq = Measure.freqHz(f.samples, tpp)
+                        var cmn = 127; var cmx = -128
+                        for (b in f.samples) { val v = b.toInt(); if (v < cmn) cmn = v; if (v > cmx) cmx = v }
+                        stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)} Vpp=" +
+                            (if (vpp != null) "%.2fV".format(vpp) else "--") +
+                            " [$vbLabel, коди ${cmn}..${cmx}]"
                     }
-                    Thread.sleep(50)
+                    val finalStat = stat
+                    runOnUiThread {
+                        show1?.let { scopeView.ch1 = it }
+                        show2?.let { scopeView.ch2 = it }
+                        scopeView.invalidate()
+                        // статус оновлюємо до 10 раз/с, сітку — кожен кадр
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - lastStatAt > 100) { lastStatAt = now; status.text = finalStat }
+                    }
+                    Thread.sleep(5)
                 } else {
                     runOnUiThread { status.text = "Нема кадру [${scope.dbg}] T${scope.lastTrg} F${scope.lastFin}" }
-                    Thread.sleep(50)
+                    Thread.sleep(20)
                 }
             }
         }.also { it.start() }
