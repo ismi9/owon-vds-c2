@@ -43,19 +43,29 @@ class ScopeView @JvmOverloads constructor(
         }
         canvas.drawLine(w / 2, 0f, w / 2, h, axis)
         canvas.drawLine(0f, h / 2, w, h / 2, axis)
-        drawChannel(canvas, ch1, ch1Paint, w, h)
-        drawChannel(canvas, ch2, ch2Paint, w, h)
+        // нульові лінії: CH1 на +1 поділка, CH2 на -1 поділка від центру
+        val zero1 = h / 2f - h / 8f
+        val zero2 = h / 2f + h / 8f
+        drawZeroMark(canvas, zero1, ch1Paint.color, w)
+        drawZeroMark(canvas, zero2, ch2Paint.color, w)
+        drawChannel(canvas, ch1, ch1Paint, w, h, zero1)
+        drawChannel(canvas, ch2, ch2Paint, w, h, zero2)
     }
 
-    private fun drawChannel(c: Canvas, data: ByteArray?, p: Paint, w: Float, h: Float) {
+    /** Мітка нуля каналу: коротка лінія на лівому краї */
+    private fun drawZeroMark(c: Canvas, zeroY: Float, color: Int, w: Float) {
+        val mp = Paint().apply { this.color = color; strokeWidth = 5f }
+        c.drawLine(0f, zeroY, w * 0.045f, zeroY, mp)
+    }
+
+    private fun drawChannel(c: Canvas, data: ByteArray?, p: Paint, w: Float, h: Float, zeroY: Float) {
         val d = data ?: return
         if (d.isEmpty()) return
         val step = w / d.size
-        // семпли знакові: -125..+125, нуль у центрі екрана (як в офіційному ПЗ)
-        // 25 кодів на поділку, 8 поділок по вертикалі (±4), як у ПК-ПЗ
+        // 25 кодів на поділку, ±100 кодів = ±4 поділки (як у ПК-ПЗ)
         fun yOf(b: Byte): Float {
             val v = b.toInt().coerceIn(-100, 100)
-            return h / 2f - v / 100f * (h / 2f)
+            return zeroY - v / 100f * (h / 2f)
         }
         var prevX = 0f
         var prevY = yOf(d[0])
