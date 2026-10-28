@@ -248,6 +248,8 @@ class MainActivity : AppCompatActivity() {
             var lastStatAt = 0L
             var phase = 0
             var writtenTb = -1
+            var noFrameRetries = 0
+            var lastNoFrameMsg = ""
             while (running) {
                 val ch1On = cbCh1.isChecked
                 val ch2On = cbCh2.isChecked
@@ -256,8 +258,10 @@ class MainActivity : AppCompatActivity() {
                 // окремі розгортки: коли обидва канали увімкнені і TB різні,
                 // acquisition чергується — CH1 знімається зі своєю розгорткою, CH2 зі своєю
                 val alternating = ch1On && ch2On && tb1 != tb2
+                // фаза «липка»: розгортку перемикаємо лише після УСПІШНОГО кадру,
+                // інакше повільний канал (20мс = ~200мс запису) ніколи не завершиться -> EBUSY і мерехтіння
                 val tbIdx = when {
-                    alternating -> { phase = phase xor 1; if (phase == 0) tb1 else tb2 }
+                    alternating -> if (phase == 0) tb1 else tb2
                     ch1On -> tb1
                     else -> tb2
                 }
@@ -293,6 +297,7 @@ class MainActivity : AppCompatActivity() {
                             (if (vpp != null) "%.2fV".format(vpp) else "--") +
                             " [$vbLabel, коди ${cmn}..${cmx}]"
                     }
+                    if (alternating) { phase = phase xor 1; noFrameRetries = 0 }
                     val finalStat = stat
                     runOnUiThread {
                         show1?.let { scopeView.ch1 = it }
@@ -304,7 +309,14 @@ class MainActivity : AppCompatActivity() {
                     }
                     Thread.sleep(5)
                 } else {
-                    runOnUiThread { status.text = "Нема кадру [${scope.dbg}] T${scope.lastTrg} F${scope.lastFin}" }
+                    // інакше: чекаємо завершення запису на ТІЙ ЖЕ розгортці; статус міняємо лише при зміні (без мерехтіння тексту)
+                    if (alternating && ++noFrameRetries >= 50) { phase = phase xor 1; noFrameRetries = 0 }
+                    val msg = "Нема кадру [${scope.dbg}] T${scope.lastTrg} F${scope.lastFin}" +
+                        " — ${VdsProtocol.TIMEBASE_LABELS[if (phase == 0) tb1 else tb2]}"
+                    if (msg != lastNoFrameMsg) {
+                        lastNoFrameMsg = msg
+                        runOnUiThread { status.text = msg }
+                    }
                     Thread.sleep(20)
                 }
             }
