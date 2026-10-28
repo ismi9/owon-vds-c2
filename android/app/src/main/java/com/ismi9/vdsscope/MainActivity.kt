@@ -26,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cbCh1: CheckBox
     private lateinit var cbCh2: CheckBox
     private lateinit var spTimebase: Spinner
+    private lateinit var spTimebase2: Spinner
     private lateinit var spVolt1: Spinner
     private lateinit var spVolt2: Spinner
     private lateinit var btnRun: Button
@@ -87,11 +88,16 @@ class MainActivity : AppCompatActivity() {
         cbCh1 = findViewById(R.id.cbCh1)
         cbCh2 = findViewById(R.id.cbCh2)
         spTimebase = findViewById(R.id.spTimebase)
+        spTimebase2 = findViewById(R.id.spTimebase2)
         spVolt1 = findViewById(R.id.spVolt1)
         spVolt2 = findViewById(R.id.spVolt2)
         btnRun = findViewById(R.id.btnRun)
 
         spTimebase.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item,
+            VdsProtocol.TIMEBASE_LABELS.toList()
+        )
+        spTimebase2.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item,
             VdsProtocol.TIMEBASE_LABELS.toList()
         )
@@ -115,6 +121,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnSingle).setOnClickListener { singleShot() }
 
         spTimebase.onItemSelectedListener = object : SimpleSel() {
+            override fun onSel(pos: Int) {
+                writeTimebase(pos)
+            }
+        }
+        spTimebase2.onItemSelectedListener = object : SimpleSel() {
             override fun onSel(pos: Int) {
                 writeTimebase(pos)
             }
@@ -235,19 +246,39 @@ class MainActivity : AppCompatActivity() {
             scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)  // свіжий збір
             scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)     // RUN=0 (sendRun)
             var lastStatAt = 0L
+            var phase = 0
+            var writtenTb = -1
             while (running) {
-                val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
+                val ch1On = cbCh1.isChecked
+                val ch2On = cbCh2.isChecked
+                val tb1 = spTimebase.selectedItemPosition
+                val tb2 = spTimebase2.selectedItemPosition
+                // окремі розгортки: коли обидва канали увімкнені і TB різні,
+                // acquisition чергується — CH1 знімається зі своєю розгорткою, CH2 зі своєю
+                val alternating = ch1On && ch2On && tb1 != tb2
+                val tbIdx = when {
+                    alternating -> { phase = phase xor 1; if (phase == 0) tb1 else tb2 }
+                    ch1On -> tb1
+                    else -> tb2
+                }
+                if (tbIdx != writtenTb) {
+                    writeTimebase(tbIdx)
+                    writtenTb = tbIdx
+                }
+                val frames = scope.readFrame(ch1On, ch2On)
                 if (frames != null) {
                     framesCount++
-                    val tbIdx = spTimebase.selectedItemPosition
                     // швидкість вибірки: 100 МГц / дільник розгортки (ПК: 2.5MS/s на 100us)
                     val tpp = VdsProtocol.SEPERATE_FREQ.getOrElse(tbIdx) { 1 } / 1e8
                     var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}" +
-                        " S=" + Measure.formatSampleRate(1 / tpp)
+                        " S=" + Measure.formatSampleRate(1 / tpp) +
+                        (if (alternating) " TB:${VdsProtocol.TIMEBASE_LABELS[tb1]}/${VdsProtocol.TIMEBASE_LABELS[tb2]}" else "")
                     // обчислення (тригер-вікно, частота, Vpp) на робочому потоці — UI не блокуємо
                     var show1: ByteArray? = null
                     var show2: ByteArray? = null
                     for (f in frames) {
+                        // при чергуванні показуємо лише канал, чия розгортка активна цього кадру
+                        if (alternating && ((phase == 0 && f.chl != 0) || (phase == 1 && f.chl != 1))) continue
                         val shown = Measure.displayWindow(f.samples)
                         when (f.chl) { 0 -> show1 = shown; 1 -> show2 = shown }
                         val vbLabel = when (f.chl) {
