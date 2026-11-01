@@ -275,6 +275,13 @@ class MainActivity : AppCompatActivity() {
             var noFrameRetries = 0
             var lastNoFrameMsg = ""
             var autoLevel = Int.MIN_VALUE   // поточний записаний рівень тригера (коди)
+            var peakWritten = false
+            // останні виміри на канал: переживають ітерації, коли канал не знімався (чергування TB)
+            val stFreq = DoubleArray(2) { Double.NaN }
+            val stVpp = DoubleArray(2) { Double.NaN }
+            val stMin = IntArray(2)
+            val stMax = IntArray(2)
+            val stSeen = BooleanArray(2)
             while (running) {
                 val ch1On = cbCh1.isChecked
                 val ch2On = cbCh2.isChecked
@@ -295,13 +302,22 @@ class MainActivity : AppCompatActivity() {
                     writeTimebase(tbIdx)
                     writtenTb = tbIdx
                 }
+                // авто-Peak: на повільних розгортках (S <= 50 kS/s) без нього сигнал
+                // перетворюється на муар; галочка Peak лишається ручним примусом
+                val wantPeak = cbPeak.isChecked || tbIdx >= 18
+                if (wantPeak != peakWritten) {
+                    scope.writeCmd(VdsProtocol.ADD_SAMPLE, 1, if (wantPeak) 1 else 0)
+                    peakWritten = wantPeak
+                }
                 val frames = scope.readFrame(ch1On, ch2On)
                 if (frames != null) {
                     framesCount++
                     // швидкість вибірки: 100 МГц / дільник розгортки (ПК: 2.5MS/s на 100us)
                     val tpp = VdsProtocol.SEPERATE_FREQ.getOrElse(tbIdx) { 1 } / 1e8
-                    var stat = "Кадрів: $framesCount S=" + Measure.formatSampleRate(1 / tpp) +
-                        (if (alternating) " TB:${VdsProtocol.TIMEBASE_LABELS[tb1]}/${VdsProtocol.TIMEBASE_LABELS[tb2]}" else "")
+                    var stat = "Кадрів: $framesCount" +
+                        (if (alternating) "  ${VdsProtocol.TIMEBASE_LABELS[tb1]} / ${VdsProtocol.TIMEBASE_LABELS[tb2]}"
+                         else " S=" + Measure.formatSampleRate(1 / tpp)) +
+                        (if (wantPeak) " Peak" else "")
                     // обчислення (тригер-вікно, частота, Vpp) на робочому потоці — UI не блокуємо
                     var show1: ByteArray? = null
                     var show2: ByteArray? = null
@@ -329,23 +345,41 @@ class MainActivity : AppCompatActivity() {
                             scope.writeCmd(lvlAdd, 2, VdsProtocol.edgeLevelPair(mid, fall))
                             scope.writeCmd(frAdd, 1, (mid - 5) and 0xFF)
                         }
-                        val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
-                        // частота: на цій FPGA апаратний частотомір віддає period_num=0,
-                        // тому беремо його лише якщо він непорожній і узгоджений з програмним
-                        val fqSw = Measure.freqHz(f.samples, tpp)
-                        val fqRaw = Measure.hardwareFreqHz(f.timeSum, f.peroidNum, tpp)
+                        // частота кожного каналу рахується на ЙОГО розгортці
+                        val tppCh = VdsProtocol.SEPERATE_FREQ.getOrElse(if (f.chl == 0) tb1 else tb2) { 1 } / 1e8
+                        val fqSw = Measure.freqHz(f.samples, tppCh)
+                        val fqRaw = Measure.hardwareFreqHz(f.timeSum, f.peroidNum, tppCh)
                         val fqHw = if (fqRaw != null && fqSw != null &&
                             fqRaw / fqSw in 0.5..2.0) fqRaw else null
-                        val fq = fqHw ?: fqSw
-                        stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)}" +
-                            " Vpp=" + (if (vpp != null) "%.2fV".format(vpp) else "--") +
-                            " [$vbLabel ${cmn}..${cmx}]"
+                        // шум каналу не показуємо як вимір: потрібен розмах хоча б у кілька кодів
+                        val vpp = if (cmx - cmn >= Measure.NOISE_CODES)
+                            Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel)) else null
+                        stFreq[f.chl] = fqHw ?: fqSw ?: Double.NaN
+                        stVpp[f.chl] = vpp ?: Double.NaN
+                        stMin[f.chl] = cmn; stMax[f.chl] = cmx
+                        stSeen[f.chl] = true
+                    }
+                    // рядок статусу будуємо зі стану: канал, який цієї ітерації не знімався,
+                    // показує свій останній вимір замість "--"
+                    var clips = 0
+                    for (chl in 0..1) {
+                        if (!stSeen[chl]) continue
+                        if ((chl == 0 && !ch1On) || (chl == 1 && !ch2On)) continue
+                        val vbLabel = if (chl == 0) VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
+                                      else VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
+                        val cf = Measure.clipFlags(chl, stMin[chl], stMax[chl])
+                        clips = clips or (cf shl (chl * 2))
+                        stat += "  CH${chl + 1} " + Measure.formatFreq(stFreq[chl].takeIf { !it.isNaN() }) +
+                            " Vpp=" + (if (stVpp[chl].isNaN()) "--" else "%.2fV".format(stVpp[chl])) +
+                            " [$vbLabel ${stMin[chl]}..${stMax[chl]}]" +
+                            (if (cf and 1 != 0) " ↑" else "") + (if (cf and 2 != 0) " ↓" else "")
                     }
                     if (alternating) { phase = phase xor 1; noFrameRetries = 0 }
                     val finalStat = stat
                     runOnUiThread {
                         show1?.let { scopeView.ch1 = it }
                         show2?.let { scopeView.ch2 = it }
+                        scopeView.clipFlags = clips
                         scopeView.invalidate()
                         // статус оновлюємо до 10 раз/с, сітку — кожен кадр
                         val now = android.os.SystemClock.elapsedRealtime()

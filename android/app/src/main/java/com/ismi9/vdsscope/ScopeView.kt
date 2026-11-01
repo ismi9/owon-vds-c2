@@ -16,6 +16,10 @@ class ScopeView @JvmOverloads constructor(
     var ch2: ByteArray? = null
     var running = false
 
+    /** Позначки обрізання: біт0 CH1 зверху, біт1 CH1 знизу, біт2 CH2 зверху, біт3 CH2 знизу */
+    var clipFlags: Int = 0
+        set(v) { field = v; invalidate() }
+
     private val grid = Paint().apply {
         color = Color.rgb(30, 46, 30); strokeWidth = 1f
     }
@@ -50,6 +54,31 @@ class ScopeView @JvmOverloads constructor(
         drawZeroMark(canvas, zero2, ch2Paint.color, w)
         drawChannel(canvas, ch1, ch1Paint, w, h, zero1)
         drawChannel(canvas, ch2, ch2Paint, w, h, zero2)
+        drawClipMarks(canvas, w, h)
+    }
+
+    /** Трикутники по краях, якщо сигнал виходить за екран */
+    private fun drawClipMarks(c: Canvas, w: Float, h: Float) {
+        if (clipFlags == 0) return
+        val p = Paint().apply { style = Paint.Style.FILL }
+        val sz = 9f
+        for (chl in 0..1) {
+            val top = (clipFlags shr (chl * 2)) and 1 != 0
+            val bottom = (clipFlags shr (chl * 2 + 1)) and 1 != 0
+            if (!top && !bottom) continue
+            p.color = if (chl == 0) ch1Paint.color else ch2Paint.color
+            val x = w - sz * 3
+            if (top) {
+                val path = android.graphics.Path()
+                path.moveTo(x, 0f); path.lineTo(x + sz * 2, 0f); path.lineTo(x + sz, sz * 1.6f)
+                path.close(); c.drawPath(path, p)
+            }
+            if (bottom) {
+                val path = android.graphics.Path()
+                path.moveTo(x, h); path.lineTo(x + sz * 2, h); path.lineTo(x + sz, h - sz * 1.6f)
+                path.close(); c.drawPath(path, p)
+            }
+        }
     }
 
     /** Мітка нуля каналу: коротка лінія на лівому краї */

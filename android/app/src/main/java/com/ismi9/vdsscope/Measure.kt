@@ -51,6 +51,22 @@ object Measure {
         }
     }
 
+    /** Мінімальний розмах у кодів, щоб вважати сигнал справжнім (інакше це шум каналу) */
+    const val NOISE_CODES = 4
+
+    /** Скільки кодів влазить вище/нижче нуля каналу на екрані.
+     *  Нуль CH1 зсунутий на +1 поділку (25 кодів), нуль CH2 — на -1. */
+    fun visibleMax(chl: Int): Int = if (chl == 0) 75 else 125
+    fun visibleMin(chl: Int): Int = if (chl == 0) -125 else -75
+
+    /** 1 = обрізано зверху, 2 = знизу, 0 = все в межах екрана */
+    fun clipFlags(chl: Int, mn: Int, mx: Int): Int {
+        var f = 0
+        if (mx > visibleMax(chl)) f = f or 1
+        if (mn < visibleMin(chl)) f = f or 2
+        return f
+    }
+
     /** Пороги (min, max, mid) сигналу */
     private fun midOf(s: ByteArray): Int {
         var mn = 127; var mx = -128
