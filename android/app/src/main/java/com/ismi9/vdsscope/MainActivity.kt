@@ -274,6 +274,7 @@ class MainActivity : AppCompatActivity() {
             var writtenTb = -1
             var noFrameRetries = 0
             var lastNoFrameMsg = ""
+            var autoLevel = Int.MIN_VALUE   // поточний записаний рівень тригера (коди)
             while (running) {
                 val ch1On = cbCh1.isChecked
                 val ch2On = cbCh2.isChecked
@@ -313,16 +314,32 @@ class MainActivity : AppCompatActivity() {
                             0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
                             else -> VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
                         }
-                        val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
-                        // частота: спершу апаратний частотомір приладу, інакше — підрахунок фронтів
-                        val fqHw = Measure.hardwareFreqHz(f.timeSum, f.peroidNum)
-                        val fq = fqHw ?: Measure.freqHz(f.samples, tpp)
                         var cmn = 127; var cmx = -128
                         for (b in f.samples) { val v = b.toInt(); if (v < cmn) cmn = v; if (v > cmx) cmx = v }
+                        // autosense: рівень тригера і опора частотоміра — на середину сигналу
+                        val mid = (cmn + cmx) / 2
+                        if (f.chl == (spTrigger.selectedItemPosition / 2) && Math.abs(mid - autoLevel) > 2) {
+                            autoLevel = mid
+                            val lvlAdd = if (f.chl == 0) VdsProtocol.ADD_EDGE_LEVEL_CH1
+                                         else VdsProtocol.ADD_EDGE_LEVEL_CH2
+                            val frAdd = if (f.chl == 0) VdsProtocol.ADD_FREQREF_CH1
+                                        else VdsProtocol.ADD_FREQREF_CH2
+                            scope.writeCmd(lvlAdd, 2, VdsProtocol.edgeLevelPair(mid, fall))
+                            scope.writeCmd(frAdd, 1, (mid - 5) and 0xFF)
+                        }
+                        val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
+                        // частота: апаратний частотомір приладу, але лише якщо він правдоподібний
+                        // і не суперечить підрахунку фронтів (інакше — програмний)
+                        val fqSw = Measure.freqHz(f.samples, tpp)
+                        val fqRaw = Measure.hardwareFreqHz(f.timeSum, f.peroidNum, tpp)
+                        val fqHw = if (fqRaw != null && fqSw != null &&
+                            fqRaw / fqSw !in 0.5..2.0) null else fqRaw
+                        val fq = fqHw ?: fqSw
                         stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)}" +
                             (if (fqHw != null) "h" else "s") +
                             " Vpp=" + (if (vpp != null) "%.2fV".format(vpp) else "--") +
-                            " [$vbLabel ${cmn}..${cmx} cur=${f.cursor}]"
+                            " [$vbLabel ${cmn}..${cmx} cur=${f.cursor}]" +
+                            "\nH:${f.dbgHdr} D:${f.dbgDm}"
                     }
                     if (alternating) { phase = phase xor 1; noFrameRetries = 0 }
                     val finalStat = stat

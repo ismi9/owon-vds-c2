@@ -97,10 +97,13 @@ object Measure {
      * Апаратний частотомір приладу: f = period_num / time_sum × 100 МГц.
      * time_sum = 0 означає, що прилад частоту не рахував.
      */
-    fun hardwareFreqHz(timeSum: Int, peroidNum: Int): Double? {
+    fun hardwareFreqHz(timeSum: Int, peroidNum: Int, tpp: Double = 0.0): Double? {
         if (timeSum == 0 || peroidNum <= 0) return null
         val f = peroidNum.toDouble() / timeSum.toDouble() * 1e8
-        return if (f.isFinite() && f > 0.0) f else null
+        if (!f.isFinite() || f <= 0.0) return null
+        // вище за Найквіста частота виміряна бути не може — це сміття частотоміра
+        if (tpp > 0.0 && f > 0.5 / tpp) return null
+        return f
     }
 
     /**

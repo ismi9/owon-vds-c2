@@ -17,7 +17,10 @@ data class ChannelFrame(
     val peroidNum: Int,
     /** Позиція тригера в кадрі (0..5000), рахуючи від правого краю. 0 = тригера немає. */
     val cursor: Int,
-    val samples: ByteArray
+    val samples: ByteArray,
+    /** Діагностика: перші 11 байтів пакета (hdr) і 11 байтів з зсуву 111 (DM) у hex */
+    val dbgHdr: String = "",
+    val dbgDm: String = ""
 )
 
 class ScopeUsb(private val ctx: Context) {
@@ -209,17 +212,22 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** Розбір пакету 5211: [11 hdr][100 trg][5100 dm] */
+    private fun hex(p: ByteArray, off: Int, n: Int): String =
+        (off until off + n).joinToString("") { "%02X".format(p[it].toInt() and 0xFF) }
+
     private fun parsePacket(p: ByteArray): ChannelFrame {
-        val dmOff = VdsProtocol.HDR_LEN + VdsProtocol.TRG_LEN
-        val chl = p[dmOff].toInt()
+        // Розкладка пакета (5211 байт): [0..10] службовий заголовок, [11..110] тригер-буфер,
+        // [111..5210] DM-блок. Заголовок chl/time_sum/period_num/cursor — у DM-блоці (+111),
+        // як у декомпілі офіційного ПЗ; байти 0..10 лише дампимо для звірки.
+        val dmOff = VdsProtocol.HDR_LEN + VdsProtocol.TRG_LEN       // 111
+        val chl = p[dmOff].toInt() and 0xFF
         val timeSum = VdsProtocol.readIntLE(p, dmOff + 1)
         val peroidNum = VdsProtocol.readIntLE(p, dmOff + 5)
-        // DM-блок: [chl u8][time_sum u32][peroid u32][slow u16] = 11 байт заголовка,
-        // далі семпли; офіційне ПЗ відкидає по 50 байтів з країв (trimNgetADCByteBuffer)
         val cursor = (p[dmOff + 9].toInt() and 0xFF) or ((p[dmOff + 10].toInt() and 0xFF) shl 8)
         val all = p.copyOfRange(dmOff, dmOff + VdsProtocol.DM_LEN)
         val samples = all.copyOfRange(50, all.size - 50)
-        return ChannelFrame(chl, timeSum, peroidNum, cursor, samples)
+        return ChannelFrame(chl, timeSum, peroidNum, cursor, samples,
+            dbgHdr = hex(p, 0, 11), dbgDm = hex(p, dmOff, 11))
     }
 
     object UsbOnGranted : android.content.BroadcastReceiver() {
