@@ -27,6 +27,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cbCh2: CheckBox
     private lateinit var spTimebase: Spinner
     private lateinit var spTimebase2: Spinner
+    private lateinit var spTrigger: Spinner
+    private lateinit var cbPeak: CheckBox
+
+    /** варіанти тригера: канал + фронт */
+    private val TRIG_LABELS = arrayOf("CH1 ↑", "CH1 ↓", "CH2 ↑", "CH2 ↓")
+    private val trigChl: Int get() = spTrigger.selectedItemPosition / 2
+    private val trigFall: Boolean get() = (spTrigger.selectedItemPosition % 2) == 1
     private lateinit var spVolt1: Spinner
     private lateinit var spVolt2: Spinner
     private lateinit var btnRun: Button
@@ -89,6 +96,8 @@ class MainActivity : AppCompatActivity() {
         cbCh2 = findViewById(R.id.cbCh2)
         spTimebase = findViewById(R.id.spTimebase)
         spTimebase2 = findViewById(R.id.spTimebase2)
+        spTrigger = findViewById(R.id.spTrigger)
+        cbPeak = findViewById(R.id.cbPeak)
         spVolt1 = findViewById(R.id.spVolt1)
         spVolt2 = findViewById(R.id.spVolt2)
         btnRun = findViewById(R.id.btnRun)
@@ -100,6 +109,10 @@ class MainActivity : AppCompatActivity() {
         spTimebase2.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item,
             VdsProtocol.TIMEBASE_LABELS.toList()
+        )
+        spTrigger.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item,
+            TRIG_LABELS.toList()
         )
         spVolt1.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item,
@@ -130,6 +143,10 @@ class MainActivity : AppCompatActivity() {
                 writeTimebase(pos)
             }
         }
+        spTrigger.onItemSelectedListener = object : SimpleSel() {
+            override fun onSel(pos: Int) { applySettings() }
+        }
+        cbPeak.setOnCheckedChangeListener { _, _ -> applySettings() }
         spVolt1.onItemSelectedListener = object : SimpleSel() {
             override fun onSel(pos: Int) {
                 devInfo?.let { init.applyChannel(it, 0, cbCh1.isChecked, pos) }
@@ -221,7 +238,14 @@ class MainActivity : AppCompatActivity() {
         val c1 = cbCh1.isChecked; val c2 = cbCh2.isChecked
         val v1 = spVolt1.selectedItemPosition; val v2 = spVolt2.selectedItemPosition
         val tb = spTimebase.selectedItemPosition
-        usbExecutor.execute { init.configureAcquisition(info, c1, c2, v1, v2, tb) }
+        usbExecutor.execute {
+            init.configureAcquisition(
+                info, c1, c2, v1, v2, tb,
+                trigChl = spTrigger.selectedItemPosition / 2,
+                trigFall = (spTrigger.selectedItemPosition % 2) == 1,
+                peak = cbPeak.isChecked
+            )
+        }
     }
 
     private fun writeTimebase(pos: Int) {
@@ -257,6 +281,7 @@ class MainActivity : AppCompatActivity() {
                 val tb2 = spTimebase2.selectedItemPosition
                 // окремі розгортки: коли обидва канали увімкнені і TB різні,
                 // acquisition чергується — CH1 знімається зі своєю розгорткою, CH2 зі своєю
+                val fall = (spTrigger.selectedItemPosition % 2) == 1
                 val alternating = ch1On && ch2On && tb1 != tb2
                 // фаза «липка»: розгортку перемикаємо лише після УСПІШНОГО кадру,
                 // інакше повільний канал (20мс = ~200мс запису) ніколи не завершиться -> EBUSY і мерехтіння
@@ -274,8 +299,7 @@ class MainActivity : AppCompatActivity() {
                     framesCount++
                     // швидкість вибірки: 100 МГц / дільник розгортки (ПК: 2.5MS/s на 100us)
                     val tpp = VdsProtocol.SEPERATE_FREQ.getOrElse(tbIdx) { 1 } / 1e8
-                    var stat = "Кадрів: $framesCount T${scope.lastTrg}F${scope.lastFin}" +
-                        " S=" + Measure.formatSampleRate(1 / tpp) +
+                    var stat = "Кадрів: $framesCount S=" + Measure.formatSampleRate(1 / tpp) +
                         (if (alternating) " TB:${VdsProtocol.TIMEBASE_LABELS[tb1]}/${VdsProtocol.TIMEBASE_LABELS[tb2]}" else "")
                     // обчислення (тригер-вікно, частота, Vpp) на робочому потоці — UI не блокуємо
                     var show1: ByteArray? = null
@@ -283,19 +307,22 @@ class MainActivity : AppCompatActivity() {
                     for (f in frames) {
                         // при чергуванні показуємо лише канал, чия розгортка активна цього кадру
                         if (alternating && ((phase == 0 && f.chl != 0) || (phase == 1 && f.chl != 1))) continue
-                        val shown = Measure.displayWindow(f.samples)
+                        val shown = Measure.displayWindow(f.samples, f.cursor, fall)
                         when (f.chl) { 0 -> show1 = shown; 1 -> show2 = shown }
                         val vbLabel = when (f.chl) {
                             0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
                             else -> VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
                         }
                         val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
-                        val fq = Measure.freqHz(f.samples, tpp)
+                        // частота: спершу апаратний частотомір приладу, інакше — підрахунок фронтів
+                        val fqHw = Measure.hardwareFreqHz(f.timeSum, f.peroidNum)
+                        val fq = fqHw ?: Measure.freqHz(f.samples, tpp)
                         var cmn = 127; var cmx = -128
                         for (b in f.samples) { val v = b.toInt(); if (v < cmn) cmn = v; if (v > cmx) cmx = v }
-                        stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)} Vpp=" +
-                            (if (vpp != null) "%.2fV".format(vpp) else "--") +
-                            " [$vbLabel, коди ${cmn}..${cmx}]"
+                        stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)}" +
+                            (if (fqHw != null) "h" else "s") +
+                            " Vpp=" + (if (vpp != null) "%.2fV".format(vpp) else "--") +
+                            " [$vbLabel ${cmn}..${cmx} cur=${f.cursor}]"
                     }
                     if (alternating) { phase = phase xor 1; noFrameRetries = 0 }
                     val finalStat = stat
@@ -311,8 +338,8 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     // інакше: чекаємо завершення запису на ТІЙ ЖЕ розгортці; статус міняємо лише при зміні (без мерехтіння тексту)
                     if (alternating && ++noFrameRetries >= 50) { phase = phase xor 1; noFrameRetries = 0 }
-                    val msg = "Нема кадру [${scope.dbg}] T${scope.lastTrg} F${scope.lastFin}" +
-                        " — ${VdsProtocol.TIMEBASE_LABELS[if (phase == 0) tb1 else tb2]}"
+                    val msg = "Нема кадру [${scope.dbg}] — " +
+                        VdsProtocol.TIMEBASE_LABELS[if (phase == 0) tb1 else tb2]
                     if (msg != lastNoFrameMsg) {
                         lastNoFrameMsg = msg
                         runOnUiThread { status.text = msg }
@@ -329,11 +356,11 @@ class MainActivity : AppCompatActivity() {
             scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)
             var tries = 0
             while (tries++ < 50) {
-                val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked)
+                val frames = scope.readFrame(cbCh1.isChecked, cbCh2.isChecked, pollStatus = true)
                 if (frames != null) {
                     runOnUiThread {
                         for (f in frames) {
-                            val shown = Measure.displayWindow(f.samples)
+                            val shown = Measure.displayWindow(f.samples, f.cursor)
                             when (f.chl) {
                                 0 -> scopeView.ch1 = shown
                                 1 -> scopeView.ch2 = shown

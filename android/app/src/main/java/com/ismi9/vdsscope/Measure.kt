@@ -57,31 +57,50 @@ object Measure {
         return (mn + mx) / 2
     }
 
+    /** Скільки семплів влазить на екран (10 поділок). Прилад віддає 5000 = 2 екрани. */
+    fun windowLen(n: Int): Int = n / 2
+
     /**
-     * Вікно відображення: глибина пам'яті приладу вдвічі довша за екран
-     * (кадр ~5089 точок = 2 екрани), тож малюємо центральні N/2 точок.
-     * Якщо є піднімальний фронт — він стає на 1/4 ширини вікна.
+     * Вікно відображення з апаратним вирівнюванням за cursor.
+     * cursor — поле з DM-заголовка: позиція тригера, рахуючи від правого краю.
+     * Тобто індекс тригера від лівого краю = n - cursor.
+     * Тригер ставимо на 1/4 ширини вікна (2.5 поділки від лівого краю).
+     * Якщо cursor некоректний (0 = тригера не було) — програмний пошук фронту.
      */
-    fun displayWindow(samples: ByteArray): ByteArray {
+    fun displayWindow(samples: ByteArray, cursorFromRight: Int = 0, fall: Boolean = false): ByteArray {
         val n = samples.size
         if (n < 128) return samples
+        val len = windowLen(n)
+        // індекс тригера від лівого краю
+        var trig = -1
+        if (cursorFromRight in 1 until n) trig = n - cursorFromRight
+        if (trig < 0) trig = findEdge(samples, fall)          // запасний варіант
+        val start0 = if (trig >= 0) (trig - len / 4) else (n - len) / 2
+        val start = start0.coerceIn(0, n - len)
+        return samples.copyOfRange(start, start + len)
+    }
+
+    /** Індекс першого фронту (перехід через середину) або -1 */
+    private fun findEdge(samples: ByteArray, fall: Boolean): Int {
+        val n = samples.size
         val mid = midOf(samples)
-        var idx = -1
         for (i in 1 until n) {
-            if (samples[i - 1].toInt() < mid && samples[i].toInt() >= mid) {
-                idx = i; break
-            }
+            val prev = samples[i - 1].toInt()
+            val cur = samples[i].toInt()
+            if (!fall && prev < mid && cur >= mid) return i
+            if (fall && prev > mid && cur <= mid) return i
         }
-        val len = n / 2
-        val start0 = if (idx >= 0) idx - len / 4 else n / 4
-        val out = ByteArray(len)
-        for (j in 0 until len) {
-            var k = start0 + j
-            if (k < 0) k += n
-            if (k >= n) k -= n
-            out[j] = samples[k]
-        }
-        return out
+        return -1
+    }
+
+    /**
+     * Апаратний частотомір приладу: f = period_num / time_sum × 100 МГц.
+     * time_sum = 0 означає, що прилад частоту не рахував.
+     */
+    fun hardwareFreqHz(timeSum: Int, peroidNum: Int): Double? {
+        if (timeSum == 0 || peroidNum <= 0) return null
+        val f = peroidNum.toDouble() / timeSum.toDouble() * 1e8
+        return if (f.isFinite() && f > 0.0) f else null
     }
 
     /**

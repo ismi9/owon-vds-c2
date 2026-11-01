@@ -131,14 +131,29 @@ class DeviceInit(private val ctx: Context, private val usb: ScopeUsb) {
 
     // ---------- Конфіг запису ----------
     /** Параметри як у Submitor2: c_dm, c_sample, c_htp, канали */
-    fun configureAcquisition(info: DeviceInfo, ch1On: Boolean, ch2On: Boolean, vb1: Int, vb2: Int, tbIdx: Int) {
+    fun configureAcquisition(
+        info: DeviceInfo, ch1On: Boolean, ch2On: Boolean, vb1: Int, vb2: Int, tbIdx: Int,
+        trigChl: Int = 0, trigFall: Boolean = false, peak: Boolean = false
+    ) {
         usb.drain()
         usb.drain()
         usb.writeCmd(VdsProtocol.ADD_DM, 2, VdsProtocol.DM_LEN)           // 5000+50+50
-        usb.writeCmd(VdsProtocol.ADD_SAMPLE, 1, 0)                          // не peak-detect
-        val half = VdsProtocol.DM_LEN shr 1
-        repeat(2) { usb.writeCmdBytes(VdsProtocol.ADD_PRE_TRG, 2, half) }
-        repeat(2) { usb.writeCmdBytes(VdsProtocol.ADD_SUF_TRG, 4, half) }
+        usb.writeCmd(VdsProtocol.ADD_SAMPLE, 1, if (peak) 1 else 0)         // 1 = peak detect
+        // PRE/SUF за формулою офіційного ПЗ: htp = 5000×(0.5 - position), HTP_ERR = 11
+        val pre = (VdsProtocol.DM_LEN shr 1) - 11                          // позиція 0.5 -> 2539
+        val suf = (VdsProtocol.DM_LEN shr 1) + 11                          // 2561
+        usb.writeCmd(VdsProtocol.ADD_PRE_TRG, 2, pre)
+        usb.writeCmd(VdsProtocol.ADD_SUF_TRG, 2, suf)
+        usb.writeCmd(VdsProtocol.ADD_EMPTY, 1, 1)
+
+        // тригер: джерело + фронт + рівень (0 кодів = центр), опорний рівень частотоміра
+        usb.writeCmd(VdsProtocol.ADD_TRG, 2, VdsProtocol.triggerWord(trigChl, trigFall, 0))
+        val lvl = 0
+        val pair = VdsProtocol.edgeLevelPair(lvl, trigFall)
+        val lvlAdd = if (trigChl == 0) VdsProtocol.ADD_EDGE_LEVEL_CH1 else VdsProtocol.ADD_EDGE_LEVEL_CH2
+        usb.writeCmd(lvlAdd, 2, pair)
+        val frAdd = if (trigChl == 0) VdsProtocol.ADD_FREQREF_CH1 else VdsProtocol.ADD_FREQREF_CH2
+        usb.writeCmd(frAdd, 1, (lvl - 5) and 0xFF)
         usb.writeCmd(VdsProtocol.ADD_EMPTY, 1, 1)
 
         // канали: прапор + gain + zero (калібровані)

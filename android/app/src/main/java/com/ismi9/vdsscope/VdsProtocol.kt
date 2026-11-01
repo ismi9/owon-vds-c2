@@ -37,6 +37,8 @@ object VdsProtocol {
     const val ADD_PRE_TRG = 90
     const val ADD_SUF_TRG = 86
     const val ADD_SAMPLE = 9
+    const val ADD_FREQREF_CH1 = 74
+    const val ADD_FREQREF_CH2 = 75
     const val ADD_EMPTY = 268
     const val ADD_FORCETRG = 12
     const val FLASH_SIZE = 2002
@@ -92,6 +94,31 @@ object VdsProtocol {
 
     /** Значення з відповіді (байти 1..4) */
     fun respValue(resp: ByteArray): Int = readIntLE(resp, 1)
+
+    /**
+     * Слово тригера (рег 36), бітова карта з florentbr/OWON-VDS1022:
+     *  bit0    source [0: канал, 1: external]
+     *  bit13   канал [0: CH1, 1: CH2]
+     *  bit12   умова [0: підйом, 1: спад]
+     *  bit10-11 sweep [0: auto, 1: normal, 2: once]
+     *  bit8,14 режим [0: edge, 1: video, 2: slope, 3: pulse]
+     *  bit15   alternate
+     */
+    fun triggerWord(chl: Int, fall: Boolean, sweep: Int = 0): Int =
+        ((chl and 1) shl 13) or ((if (fall) 1 else 0) shl 12) or ((sweep and 3) shl 10)
+
+    /**
+     * Рівень тригера: пара байтів [верхній, нижній] з гістерезисом 10 кодів.
+     * Офіційне ПЗ пакує як _u16(lsb = level, msb = level-10) і шле u16 LE,
+     * тобто НА ДРОТІ перший байт = верхній рівень, другий = на 10 нижче.
+     * Для спаду рівень зсувається на +10 (вікно [level, level+10]).
+     * Наше значення для packCmd (LE) тому байт-переставлене.
+     */
+    fun edgeLevelPair(level: Int, fall: Boolean): Int {
+        val hi = if (fall) level + 10 else level
+        val lo = hi - 10
+        return ((lo and 0xFF) shl 8) or (hi and 0xFF)
+    }
 
     /** Бітова карта каналів для GETDATA: обидва on -> 0x0505 */
     fun chlFlag(ch1On: Boolean, ch2On: Boolean): Int {

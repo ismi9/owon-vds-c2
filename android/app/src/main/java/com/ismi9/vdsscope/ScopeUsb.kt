@@ -11,7 +11,14 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 
 /** Кадр каналу: сирі 8-бітні семпли АЦП */
-data class ChannelFrame(val chl: Int, val timeSum: Int, val peroidNum: Int, val samples: ByteArray)
+data class ChannelFrame(
+    val chl: Int,
+    val timeSum: Int,
+    val peroidNum: Int,
+    /** Позиція тригера в кадрі (0..5000), рахуючи від правого краю. 0 = тригера немає. */
+    val cursor: Int,
+    val samples: ByteArray
+)
 
 class ScopeUsb(private val ctx: Context) {
     val usbManager = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -160,16 +167,24 @@ class ScopeUsb(private val ctx: Context) {
      * TRG_D -> datafinished -> (trg!=0 || fin>0) ? GETDATA : нічого.
      * Жодних скидань буфера: запізніла відповідь споживається наступним читанням.
      */
-    @Synchronized fun readFrame(ch1On: Boolean, ch2On: Boolean): List<ChannelFrame>? {
+    /**
+     * Читання кадру.
+     * pollStatus=false (Auto-sweep): статус не опитуємо взагалі — як офіційне ПЗ.
+     * Прилад відповідає 5 байтами 'E' (EBUSY), якщо дані ще не готові; тоді null.
+     * pollStatus=true (ONCE/NORMAL): спершу TRG_D і datafinished, як у ПК-ПЗ.
+     */
+    @Synchronized fun readFrame(ch1On: Boolean, ch2On: Boolean, pollStatus: Boolean = false): List<ChannelFrame>? {
         val c = connection ?: run { dbg = "нема connection"; return null }
         val ep = epIn ?: run { dbg = "нема epIn"; return null }
         val epO = epOut ?: run { dbg = "нема epOut"; return null }
-        val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0)
-        if (trg == null) { dbg = "TRG_D нема"; return null }
-        val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0)
-        if (fin == null) { dbg = "FIN нема"; return null }
-        lastTrg = trg; lastFin = fin
-        if (trg == 0 && fin <= 0) { dbg = "дані не готові (T=0 F=0)"; return null }
+        if (pollStatus) {
+            val trg = sendCmd(VdsProtocol.ADD_TRG_D, 1, 0)
+            if (trg == null) { dbg = "TRG_D нема"; return null }
+            val fin = sendCmd(VdsProtocol.ADD_DATAFINISHED, 1, 0)
+            if (fin == null) { dbg = "FIN нема"; return null }
+            lastTrg = trg; lastFin = fin
+            if (trg == 0 && fin <= 0) { dbg = "дані не готові (T=0 F=0)"; return null }
+        }
         val cmd = VdsProtocol.packCmd(VdsProtocol.ADD_GETDATA, 2, VdsProtocol.chlFlag(ch1On, ch2On))
         if (c.bulkTransfer(epO, cmd, cmd.size, 1000) != cmd.size) { dbg = "GETDATA: запис не вдався"; return null }
         val onCount = (if (ch1On) 1 else 0) + (if (ch2On) 1 else 0)
@@ -201,9 +216,10 @@ class ScopeUsb(private val ctx: Context) {
         val peroidNum = VdsProtocol.readIntLE(p, dmOff + 5)
         // DM-блок: [chl u8][time_sum u32][peroid u32][slow u16] = 11 байт заголовка,
         // далі семпли; офіційне ПЗ відкидає по 50 байтів з країв (trimNgetADCByteBuffer)
+        val cursor = (p[dmOff + 9].toInt() and 0xFF) or ((p[dmOff + 10].toInt() and 0xFF) shl 8)
         val all = p.copyOfRange(dmOff, dmOff + VdsProtocol.DM_LEN)
         val samples = all.copyOfRange(50, all.size - 50)
-        return ChannelFrame(chl, timeSum, peroidNum, samples)
+        return ChannelFrame(chl, timeSum, peroidNum, cursor, samples)
     }
 
     object UsbOnGranted : android.content.BroadcastReceiver() {

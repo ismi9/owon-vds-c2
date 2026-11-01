@@ -63,8 +63,9 @@ class ScopeView @JvmOverloads constructor(
         if (d.isEmpty()) return
         val step = w / d.size
         // 25 кодів на поділку, ±100 кодів = ±4 поділки (як у ПК-ПЗ)
+        // без обмеження: сигнал, більший за екран, має йти за край, а не малюватись пласким
         fun yOf(b: Byte): Float {
-            val v = b.toInt().coerceIn(-100, 100)
+            val v = b.toInt()
             return zeroY - v / 100f * (h / 2f)
         }
         var prevX = 0f
