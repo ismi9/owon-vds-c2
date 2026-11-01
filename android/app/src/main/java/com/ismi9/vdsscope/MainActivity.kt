@@ -338,7 +338,6 @@ class MainActivity : AppCompatActivity() {
                             fqRaw / fqSw in 0.5..2.0) fqRaw else null
                         val fq = fqHw ?: fqSw
                         stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)}" +
-                            (if (fqHw != null) "h" else "s") +
                             " Vpp=" + (if (vpp != null) "%.2fV".format(vpp) else "--") +
                             " [$vbLabel ${cmn}..${cmx}]"
                     }

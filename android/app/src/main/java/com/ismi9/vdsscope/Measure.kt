@@ -39,12 +39,17 @@ object Measure {
 
 
     /** 2.5e6 -> "2.5MS/s" */
-    fun formatSampleRate(hz: Double): String =
-        when {
-            hz >= 1e6 -> "%.2gMS/s".format(hz / 1e6)
-            hz >= 1e3 -> "%.2gkS/s".format(hz / 1e3)
-            else -> "%.2gS/s".format(hz)
+    /** 1e8 -> "100 MS/s", 2.5e6 -> "2.5 MS/s", 500.0 -> "500 S/s" (без експоненти) */
+    fun formatSampleRate(hz: Double): String {
+        fun fmt(v: Double): String =
+            if (v >= 100 || Math.abs(v - Math.round(v)) < 0.05) "%d".format(Math.round(v))
+            else "%.1f".format(v)
+        return when {
+            hz >= 1e6 -> fmt(hz / 1e6) + " MS/s"
+            hz >= 1e3 -> fmt(hz / 1e3) + " kS/s"
+            else -> fmt(hz) + " S/s"
         }
+    }
 
     /** Пороги (min, max, mid) сигналу */
     private fun midOf(s: ByteArray): Int {
