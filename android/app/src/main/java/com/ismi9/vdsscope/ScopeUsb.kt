@@ -18,7 +18,7 @@ data class ChannelFrame(
     /** Позиція тригера в кадрі (0..5000), рахуючи від правого краю. 0 = тригера немає. */
     val cursor: Int,
     val samples: ByteArray,
-    /** Діагностика: перші 11 байтів пакета (hdr) і 11 байтів з зсуву 111 (DM) у hex */
+    /** Діагностика: розібрані заголовки з зсуву 0 і з зсуву 111, у десяткових числах */
     val dbgHdr: String = "",
     val dbgDm: String = ""
 )
@@ -212,22 +212,30 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     /** Розбір пакету 5211: [11 hdr][100 trg][5100 dm] */
-    private fun hex(p: ByteArray, off: Int, n: Int): String =
-        (off until off + n).joinToString("") { "%02X".format(p[it].toInt() and 0xFF) }
+    /** "chl=.. t=.. p=.. c=.." для 11 байтів заголовка з зсуву off */
+    private fun hdr(p: ByteArray, off: Int): String {
+        val chl = p[off].toInt() and 0xFF
+        val t = VdsProtocol.readIntLE(p, off + 1)
+        val pn = VdsProtocol.readIntLE(p, off + 5)
+        val c = (p[off + 9].toInt() and 0xFF) or ((p[off + 10].toInt() and 0xFF) shl 8)
+        return "k=$chl t=$t p=$pn c=$c"
+    }
 
     private fun parsePacket(p: ByteArray): ChannelFrame {
-        // Розкладка пакета (5211 байт): [0..10] службовий заголовок, [11..110] тригер-буфер,
-        // [111..5210] DM-блок. Заголовок chl/time_sum/period_num/cursor — у DM-блоці (+111),
-        // як у декомпілі офіційного ПЗ; байти 0..10 лише дампимо для звірки.
-        val dmOff = VdsProtocol.HDR_LEN + VdsProtocol.TRG_LEN       // 111
-        val chl = p[dmOff].toInt() and 0xFF
-        val timeSum = VdsProtocol.readIntLE(p, dmOff + 1)
-        val peroidNum = VdsProtocol.readIntLE(p, dmOff + 5)
-        val cursor = (p[dmOff + 9].toInt() and 0xFF) or ((p[dmOff + 10].toInt() and 0xFF) shl 8)
-        val all = p.copyOfRange(dmOff, dmOff + VdsProtocol.DM_LEN)
+        // Розкладка пакета (5211 байт): [0..10] заголовок, [11..110] тригер-буфер,
+        // [111..5210] ADC-блок (50 pre + 5000 + 50 post).
+        // У v0.4.0 заголовок помилково читався з +111 (там уже семпли).
+        val all = p.copyOfRange(111, 111 + VdsProtocol.DM_LEN)
         val samples = all.copyOfRange(50, all.size - 50)
-        return ChannelFrame(chl, timeSum, peroidNum, cursor, samples,
-            dbgHdr = hex(p, 0, 11), dbgDm = hex(p, dmOff, 11))
+        return ChannelFrame(
+            chl = p[0].toInt() and 0xFF,
+            timeSum = VdsProtocol.readIntLE(p, 1),
+            peroidNum = VdsProtocol.readIntLE(p, 5),
+            cursor = (p[9].toInt() and 0xFF) or ((p[10].toInt() and 0xFF) shl 8),
+            samples = samples,
+            dbgHdr = hdr(p, 0),
+            dbgDm = hdr(p, 111)
+        )
     }
 
     object UsbOnGranted : android.content.BroadcastReceiver() {

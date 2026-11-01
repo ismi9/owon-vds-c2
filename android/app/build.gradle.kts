@@ -11,8 +11,8 @@ android {
         applicationId = "com.ismi9.vdsscope"
         minSdk = 26
         targetSdk = 30
-        versionCode = 41
-        versionName = "0.4.1-diag"
+        versionCode = 43
+        versionName = "0.4.2"
     }
 
     buildTypes {

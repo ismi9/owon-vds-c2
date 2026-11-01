@@ -308,7 +308,9 @@ class MainActivity : AppCompatActivity() {
                     for (f in frames) {
                         // при чергуванні показуємо лише канал, чия розгортка активна цього кадру
                         if (alternating && ((phase == 0 && f.chl != 0) || (phase == 1 && f.chl != 1))) continue
-                        val shown = Measure.displayWindow(f.samples, f.cursor, fall)
+                        // cursor з заголовка на цьому FPGA сталий (5108) і не є позицією тригера,
+                        // тому вирівнюємо програмно за фронтом (cursor=0 -> запасний шлях)
+                        val shown = Measure.displayWindow(f.samples, 0, fall)
                         when (f.chl) { 0 -> show1 = shown; 1 -> show2 = shown }
                         val vbLabel = when (f.chl) {
                             0 -> VdsProtocol.VOLTBASE_LABELS[spVolt1.selectedItemPosition]
@@ -328,18 +330,17 @@ class MainActivity : AppCompatActivity() {
                             scope.writeCmd(frAdd, 1, (mid - 5) and 0xFF)
                         }
                         val vpp = Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
-                        // частота: апаратний частотомір приладу, але лише якщо він правдоподібний
-                        // і не суперечить підрахунку фронтів (інакше — програмний)
+                        // частота: на цій FPGA апаратний частотомір віддає period_num=0,
+                        // тому беремо його лише якщо він непорожній і узгоджений з програмним
                         val fqSw = Measure.freqHz(f.samples, tpp)
                         val fqRaw = Measure.hardwareFreqHz(f.timeSum, f.peroidNum, tpp)
                         val fqHw = if (fqRaw != null && fqSw != null &&
-                            fqRaw / fqSw !in 0.5..2.0) null else fqRaw
+                            fqRaw / fqSw in 0.5..2.0) fqRaw else null
                         val fq = fqHw ?: fqSw
                         stat += "  CH${f.chl + 1} ${Measure.formatFreq(fq)}" +
                             (if (fqHw != null) "h" else "s") +
                             " Vpp=" + (if (vpp != null) "%.2fV".format(vpp) else "--") +
-                            " [$vbLabel ${cmn}..${cmx} cur=${f.cursor}]" +
-                            "\nH:${f.dbgHdr} D:${f.dbgDm}"
+                            " [$vbLabel ${cmn}..${cmx}]"
                     }
                     if (alternating) { phase = phase xor 1; noFrameRetries = 0 }
                     val finalStat = stat
@@ -377,7 +378,7 @@ class MainActivity : AppCompatActivity() {
                 if (frames != null) {
                     runOnUiThread {
                         for (f in frames) {
-                            val shown = Measure.displayWindow(f.samples, f.cursor)
+                            val shown = Measure.displayWindow(f.samples, 0)
                             when (f.chl) {
                                 0 -> scopeView.ch1 = shown
                                 1 -> scopeView.ch2 = shown
