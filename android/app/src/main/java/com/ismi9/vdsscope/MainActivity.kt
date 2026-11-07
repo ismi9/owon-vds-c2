@@ -39,9 +39,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnRun: Button
 
     @Volatile private var running = false
-    private var pollThread: Thread? = null
     private var framesCount = 0
-    private var devInfo: DeviceInfo? = null
+    private var devInfo: DeviceInfo?
+        get() = (application as VdsApp).devInfo
+        set(v) { (application as VdsApp).devInfo = v }
     private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private lateinit var init: DeviceInit
 
@@ -87,7 +88,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        scope = ScopeUsb(this)
+        scope = (application as VdsApp).scope
         init = DeviceInit(this, scope)
         init.log = { m -> runOnUiThread { status.text = m } }
         scopeView = findViewById(R.id.scopeView)
@@ -158,16 +159,32 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // якщо прилад уже підключений — підключитись одразу
-        scope.findDevice()?.let { dev ->
-            if (scope.hasPermission(dev)) connect() else scope.requestPermission(dev) { connect() }
+        // з'єднання могло пережити попередню Activity: тоді просто відновлюємо стан
+        if (scope.isConnected && devInfo != null) {
+            val i = devInfo!!
+            status.text = "VDS1022 v${i.version} №${i.serial} готово"
+            running = scope.isPolling
+            btnRun.text = getString(if (running) R.string.stop else R.string.run)
+            if (running) attachToPolling()
+        } else {
+            // якщо прилад уже підключений — підключитись одразу
+            scope.findDevice()?.let { dev ->
+                if (scope.hasPermission(dev)) connect() else scope.requestPermission(dev) { connect() }
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        running = false
-        scope.disconnect()
+        try { unregisterReceiver(usbReceiver) } catch (_: Exception) {}
+        // USB-з'єднання належить Application і переживає Activity (поворот, перестворення).
+        // Закриваємо лише коли користувач справді вийшов із застосунку.
+        if (isFinishing) {
+            running = false
+            scope.stopPolling()
+            scope.disconnect()
+            (application as VdsApp).devInfo = null
+        }
     }
 
     private fun connect() {
@@ -259,13 +276,16 @@ class MainActivity : AppCompatActivity() {
         if (running) {
             running = false
             btnRun.text = getString(R.string.run)
-            usbExecutor.execute { scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 1) }  // STOP=1
+            usbExecutor.execute {
+                scope.stopPolling()                                  // потік зупинено до запису STOP
+                scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 1)         // STOP=1
+            }
             return
         }
         if (!scope.isConnected) { toast("Спершу підключи прилад"); return }
         running = true
         btnRun.text = getString(R.string.stop)
-        pollThread = Thread {
+        scope.pollThread = Thread {
             applySettings()
             scope.writeCmd(VdsProtocol.ADD_RE_COLLECT, 1, 1)  // свіжий збір
             scope.writeCmd(VdsProtocol.ADD_RUNSTOP, 1, 0)     // RUN=0 (sendRun)
@@ -282,7 +302,8 @@ class MainActivity : AppCompatActivity() {
             val stMin = IntArray(2)
             val stMax = IntArray(2)
             val stSeen = BooleanArray(2)
-            while (running) {
+            val me = Thread.currentThread()
+            while (running && scope.pollThread === me) {
                 val ch1On = cbCh1.isChecked
                 val ch2On = cbCh2.isChecked
                 val tb1 = spTimebase.selectedItemPosition
@@ -400,6 +421,10 @@ class MainActivity : AppCompatActivity() {
             }
         }.also { it.start() }
     }
+
+    /** Нова Activity підхоплює вже працюючий потік: UI-ссилки у потоці беруться з полів Activity,
+     *  тож після configChanges достатньо лишити running=true. */
+    private fun attachToPolling() { running = true }
 
     private fun singleShot() {
         if (!scope.isConnected) { toast("Спершу підключи прилад"); return }

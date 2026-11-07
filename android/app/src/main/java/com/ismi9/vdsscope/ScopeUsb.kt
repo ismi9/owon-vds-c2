@@ -73,11 +73,23 @@ class ScopeUsb(private val ctx: Context) {
     }
 
     fun disconnect() {
+        stopPolling()
         connection?.let { c -> usbIf?.let { c.releaseInterface(it) }; c.close() }
         connection = null; epIn = null; epOut = null; connectedDevice = null
     }
 
     val isConnected: Boolean get() = connection != null
+
+    /** Потік опитування кадрів (належить USB-шару, щоб пережити Activity) */
+    @Volatile var pollThread: Thread? = null
+    val isPolling: Boolean get() = pollThread?.isAlive == true
+
+    /** Зупиняє потік опитування і чекає його завершення (до 1.5с), перш ніж чіпати USB */
+    fun stopPolling() {
+        val t = pollThread ?: return
+        pollThread = null
+        try { t.join(1500) } catch (_: InterruptedException) {}
+    }
 
     /** Лише запис, без читання відповіді (для GETDATA тощо) */
     @Synchronized fun writeCmdNoAck(add: Int, bytes: Int, value: Int): Boolean {
