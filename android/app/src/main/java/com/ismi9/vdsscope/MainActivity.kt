@@ -45,7 +45,12 @@ class MainActivity : AppCompatActivity() {
         set(v) { (application as VdsApp).devInfo = v }
     private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private lateinit var init: DeviceInit
+    private lateinit var cal: CalStore
+    private lateinit var btnCal: Button
 
+    /** останній виміряний розмах на канал — для поправки за еталоном */
+    @Volatile private var lastVpp = DoubleArray(2) { Double.NaN }
+    @Volatile private var lastCodes = IntArray(4)
     private val ACTION_USB_PERMISSION = "com.ismi9.vdsscope.USB_PERMISSION"
 
     /** Живий стан USB-шини одним рядком */
@@ -90,6 +95,7 @@ class MainActivity : AppCompatActivity() {
 
         scope = (application as VdsApp).scope
         init = DeviceInit(this, scope)
+        cal = CalStore(this)
         init.log = { m -> runOnUiThread { status.text = m } }
         scopeView = findViewById(R.id.scopeView)
         status = findViewById(R.id.status)
@@ -102,6 +108,8 @@ class MainActivity : AppCompatActivity() {
         spVolt1 = findViewById(R.id.spVolt1)
         spVolt2 = findViewById(R.id.spVolt2)
         btnRun = findViewById(R.id.btnRun)
+        btnCal = findViewById(R.id.btnCal)
+        btnCal.setOnClickListener { showCalibrationDialog() }
 
         spTimebase.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item,
@@ -374,11 +382,15 @@ class MainActivity : AppCompatActivity() {
                             fqRaw / fqSw in 0.5..2.0) fqRaw else null
                         // шум каналу не показуємо як вимір: потрібен розмах хоча б у кілька кодів
                         val vpp = if (cmx - cmn >= Measure.NOISE_CODES)
-                            Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel)) else null
+                            Measure.vppVolts(f.samples, Measure.labelToVolts(vbLabel))
+                                ?.times(cal.factor(f.chl)) else null
                         stFreq[f.chl] = fqHw ?: fqSw ?: Double.NaN
                         stVpp[f.chl] = vpp ?: Double.NaN
                         stMin[f.chl] = cmn; stMax[f.chl] = cmx
                         stSeen[f.chl] = true
+                        lastVpp[f.chl] = vpp ?: Double.NaN
+                        lastCodes[f.chl * 2] = cmn
+                        lastCodes[f.chl * 2 + 1] = cmx
                     }
                     // рядок статусу будуємо зі стану: канал, який цієї ітерації не знімався,
                     // показує свій останній вимір замість "--"
@@ -390,7 +402,9 @@ class MainActivity : AppCompatActivity() {
                                       else VdsProtocol.VOLTBASE_LABELS[spVolt2.selectedItemPosition]
                         val cf = Measure.clipFlags(chl, stMin[chl], stMax[chl])
                         clips = clips or (cf shl (chl * 2))
+                        val cf2 = cal.factor(chl)
                         stat += "  CH${chl + 1} " + Measure.formatFreq(stFreq[chl].takeIf { !it.isNaN() }) +
+                            (if (Math.abs(cf2 - 1.0) > 1e-6) "x%.3f".format(cf2) else "") +
                             " Vpp=" + (if (stVpp[chl].isNaN()) "--" else "%.2fV".format(stVpp[chl])) +
                             " [$vbLabel ${stMin[chl]}..${stMax[chl]}]" +
                             (if (cf and 1 != 0) " ↑" else "") + (if (cf and 2 != 0) " ↓" else "")
@@ -420,6 +434,54 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.also { it.start() }
+    }
+
+    /**
+     * Калібрування за еталоном: показуємо заводські таблиці з флешу і даємо ввести
+     * справжню напругу джерела. Поправка = еталон / вимір, зберігається на канал.
+     */
+    private fun showCalibrationDialog() {
+        val v1 = lastVpp[0]; val v2 = lastVpp[1]
+        val sb = StringBuilder()
+        sb.append("Заводські таблиці (флеш):\n")
+        sb.append(devInfo?.cal?.dump() ?: "нема (прилад не ініціалізовано)")
+        sb.append("\n\nЗараз виміряно:\n")
+        sb.append("CH1: ").append(if (v1.isNaN()) "--" else "%.3f В".format(v1))
+            .append("  коди ${lastCodes[0]}..${lastCodes[1]}")
+            .append("  поправка x%.3f".format(cal.factor(0))).append("\n")
+        sb.append("CH2: ").append(if (v2.isNaN()) "--" else "%.3f В".format(v2))
+            .append("  коди ${lastCodes[2]}..${lastCodes[3]}")
+            .append("  поправка x%.3f".format(cal.factor(1)))
+        sb.append("\n\nВведи справжню напругу джерела (напр. 5.00) і натисни канал.")
+
+        val input = android.widget.EditText(this).apply {
+            hint = "еталон, В"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(40, 20, 40, 0)
+            addView(android.widget.TextView(context).apply { text = sb.toString(); textSize = 11f })
+            addView(input)
+        }
+        fun applyTrim(chl: Int) {
+            val ref = input.text.toString().replace(',', '.').toDoubleOrNull()
+            if (ref == null || ref <= 0.0) { toast("Введи число, напр. 5.00"); return }
+            val meas = lastVpp[chl]
+            if (meas.isNaN() || meas <= 0.0) { toast("Нема виміру на CH${chl + 1}"); return }
+            val f = ref / meas
+            cal.setFactor(chl, f)
+            toast("CH${chl + 1}: x%.3f збережено".format(cal.factor(chl)))
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Калібрування вертикалі")
+            .setView(box)
+            .setPositiveButton("CH1") { _, _ -> applyTrim(0) }
+            .setNeutralButton("CH2") { _, _ -> applyTrim(1) }
+            .setNegativeButton("Скинути") { _, _ ->
+                cal.reset(); toast("Поправки скинуто до 1.000")
+            }
+            .show()
     }
 
     /** Нова Activity підхоплює вже працюючий потік: UI-ссилки у потоці беруться з полів Activity,

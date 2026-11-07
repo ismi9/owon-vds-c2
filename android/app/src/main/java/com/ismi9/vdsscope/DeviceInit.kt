@@ -4,8 +4,20 @@ import android.content.Context
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Калібрування з factory-партиції флеша: int16 LE [канал][vb] */
-class Calibration(val gain: Array<IntArray>, val step: Array<IntArray>, val comp: Array<IntArray>)
+/**
+ * Калібрування з factory-партиції флеша, три таблиці int16 LE [канал][vb],
+ * за розкладкою флеша: +6 Gain, +46 Amplitude, +86 Compensation (кожна 2x10 = 40 байт).
+ */
+class Calibration(val gain: Array<IntArray>, val ampl: Array<IntArray>, val comp: Array<IntArray>) {
+
+    /** Людський дамп для діагностики: по рядку на таблицю й канал */
+    fun dump(): String {
+        fun row(name: String, t: Array<IntArray>) = (0..1).joinToString("\n") { ch ->
+            "%s CH%d: ".format(name, ch + 1) + (0 until 10).joinToString(" ") { "%d".format(t[ch][it]) }
+        }
+        return listOf(row("Gain", gain), row("Ampl", ampl), row("Comp", comp)).joinToString("\n")
+    }
+}
 
 class DeviceInfo(
     val fpgaWasLoaded: Boolean,
